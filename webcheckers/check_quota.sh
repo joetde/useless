@@ -12,3 +12,9 @@ do
 	fi
 done
 
+if [ -z "$quotas" ]
+then
+	echo "Quota check failed"
+fi
+
+
