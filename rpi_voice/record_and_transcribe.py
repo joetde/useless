@@ -5,6 +5,7 @@ import time
 import select
 import termios
 import tty
+import argparse
 import subprocess
 from faster_whisper import WhisperModel
 
@@ -13,6 +14,7 @@ RATE = 16000
 TRIGGER_KEY = " "        # Spacebar
 TRIGGER_KEY_NAME = "SPACE"
 RELEASE_TIMEOUT = 0.75   # Seconds without key repeat before treating as released
+DEFAULT_LANGUAGE = None  # Set to e.g. "en" or "fr" to always force a language, or None for auto-detect
 
 # Mapping common language codes to human-readable names
 LANGUAGE_NAMES = {
@@ -124,19 +126,32 @@ def wait_and_record_while_held(device, output_file=WAVE_OUTPUT_FILENAME):
     print(f"* Audio saved to {output_file} ({os.path.getsize(output_file):,} bytes)")
     return True
 
-def transcribe_and_detect(model, audio_path=WAVE_OUTPUT_FILENAME):
+def transcribe_and_detect(model, audio_path=WAVE_OUTPUT_FILENAME, language=DEFAULT_LANGUAGE):
     if not os.path.exists(audio_path) or os.path.getsize(audio_path) <= 44:
         return
 
-    print("Transcribing and analyzing language...")
+    if language:
+        lang_name = LANGUAGE_NAMES.get(language, language.upper())
+        print(f"Transcribing in forced language: {lang_name} ({language})...")
+    else:
+        print("Transcribing and analyzing language...")
+
     # vad_filter=True filters out background silence to prevent hallucinations
-    segments_gen, info = model.transcribe(audio_path, beam_size=5, vad_filter=True)
+    segments_gen, info = model.transcribe(
+        audio_path,
+        language=language,
+        beam_size=5,
+        vad_filter=True,
+    )
     segments = list(segments_gen)
 
     print("\n" + "=" * 48)
     print(" RESULTS")
     print("=" * 48)
-    if info.all_language_probs:
+    if language:
+        lang_full = LANGUAGE_NAMES.get(language, language.upper())
+        print(f"Forced Language   : {lang_full} ({language})")
+    elif info.all_language_probs:
         print("Top 3 Language Matches:")
         for rank, (code, prob) in enumerate(info.all_language_probs[:3], start=1):
             name = LANGUAGE_NAMES.get(code, code.upper())
@@ -158,8 +173,20 @@ def transcribe_and_detect(model, audio_path=WAVE_OUTPUT_FILENAME):
     print("=" * 48)
 
 def main():
+    parser = argparse.ArgumentParser(description="Record audio while holding spacebar and transcribe with Whisper.")
+    parser.add_argument(
+        "-l", "--language",
+        type=str,
+        default=DEFAULT_LANGUAGE,
+        help="Force transcription language using ISO code (e.g., 'en', 'fr', 'es'). Omit for auto-detection."
+    )
+    args = parser.parse_args()
+
     device = detect_usb_mic_device()
     print(f"Target audio device: {device}")
+    if args.language:
+        lang_name = LANGUAGE_NAMES.get(args.language, args.language.upper())
+        print(f"Forced language: {lang_name} ({args.language})")
 
     print("Loading Whisper model ('tiny') with INT8 precision...")
     # Pre-load once so recording starts & transcribes immediately on button press
@@ -167,7 +194,7 @@ def main():
 
     try:
         while wait_and_record_while_held(device):
-            transcribe_and_detect(model)
+            transcribe_and_detect(model, language=args.language)
     except KeyboardInterrupt:
         pass
     print("\nExiting.")
