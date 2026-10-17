@@ -2,15 +2,19 @@ import argparse
 from typing import Optional
 
 from engines import (
+    AVAILABLE_PIPER_VOICES,
     DEFAULT_LANGUAGE,
     DEFAULT_SPEECH_SPEED,
+    DEFAULT_VOICE_EFFECT,
     FasterWhisperSTT,
     HoldKeyAlsaRecorder,
+    PIPER_VOICE_MAP,
     PiperTTSEngine,
     RecorderEngine,
     STTEngine,
     TTSEngine,
     TranscriptionResult,
+    VOICE_EFFECTS,
     detect_usb_mic_device,
     detect_usb_speaker_device,
     get_language_name,
@@ -78,6 +82,9 @@ def run_pipeline(
 
 
 def main() -> None:
+    effect_choices = list(VOICE_EFFECTS.keys()) + ["random"]
+    zh_voice_choices = AVAILABLE_PIPER_VOICES["zh"]
+
     parser = argparse.ArgumentParser(
         description="Record audio while holding spacebar, transcribe with STT engine, and read back via TTS engine."
     )
@@ -85,7 +92,7 @@ def main() -> None:
         "-l", "--language",
         type=str,
         default=DEFAULT_LANGUAGE,
-        help="Force transcription and TTS language using ISO code (e.g., 'en', 'fr', 'es'). Omit for auto-detection.",
+        help="Force transcription and TTS language using ISO code (e.g., 'en', 'fr', 'zh', 'es'). Omit for auto-detection.",
     )
     parser.add_argument(
         "--model",
@@ -104,6 +111,20 @@ def main() -> None:
         default=DEFAULT_SPEECH_SPEED,
         help=f"TTS length scale (default: {DEFAULT_SPEECH_SPEED}; >1.0 is slower/clearer, <1.0 is faster).",
     )
+    parser.add_argument(
+        "-e", "--effect",
+        type=str,
+        choices=effect_choices,
+        default=DEFAULT_VOICE_EFFECT,
+        help=f"Goofy voice effect to apply (default: '{DEFAULT_VOICE_EFFECT}'). Use 'random' to pick a surprise effect each time, or 'none' for raw voice.",
+    )
+    parser.add_argument(
+        "--zh-voice",
+        type=str,
+        choices=zh_voice_choices,
+        default=PIPER_VOICE_MAP["zh"],
+        help=f"Chinese Piper voice model to use (default: '{PIPER_VOICE_MAP['zh']}').",
+    )
     args = parser.parse_args()
 
     mic_device = detect_usb_mic_device()
@@ -113,13 +134,22 @@ def main() -> None:
     if args.language:
         lang_name = get_language_name(args.language)
         print(f"Forced language      : {lang_name} ({args.language})")
+    if not args.no_tts:
+        print(f"Goofy voice effect   : {args.effect}")
 
     recorder = HoldKeyAlsaRecorder(device=mic_device)
     stt_engine = FasterWhisperSTT(model_size=args.model, compute_type="int8")
 
     tts_engine: Optional[TTSEngine] = None
     if not args.no_tts:
-        piper_tts = PiperTTSEngine(speaker_device=speaker_device, length_scale=args.speed)
+        custom_voice_map = dict(PIPER_VOICE_MAP)
+        custom_voice_map["zh"] = args.zh_voice
+        piper_tts = PiperTTSEngine(
+            speaker_device=speaker_device,
+            length_scale=args.speed,
+            voice_effect=args.effect,
+            voice_map=custom_voice_map,
+        )
         piper_tts.preload_voices(forced_language=args.language)
         tts_engine = piper_tts
 
