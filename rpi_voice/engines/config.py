@@ -99,6 +99,9 @@ DEFAULT_LLM_MODELS = {
     "echo": "echo",
 }
 DEFAULT_LLM_MODEL = DEFAULT_LLM_MODELS[DEFAULT_LLM_PROVIDER]
+DEFAULT_MAX_CONTEXT_TURNS = 5       # Number of recent user/assistant back-and-forth exchanges to pass to LLM
+DEFAULT_CONTEXT_IDLE_TIMEOUT = 600.0  # Seconds of inactivity (10 mins) before resetting conversation context
+SESSIONS_DIR = Path(__file__).resolve().parent.parent / "sessions"
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are an educational voice assistant for a young child (around 4 to 8 years old). "

@@ -1,7 +1,8 @@
 import os
 import re
 from abc import ABC, abstractmethod
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Sequence
 import requests
 
 try:
@@ -16,6 +17,15 @@ from .config import (
     DEFAULT_SYSTEM_PROMPT,
     get_language_name,
 )
+
+
+@dataclass
+class ChatTurn:
+    """Represents one completed user/assistant exchange for conversation context."""
+    user_text: str
+    assistant_text: str
+    language: Optional[str] = None
+    timestamp: Optional[str] = None
 
 
 def clean_text_for_speech(text: str) -> str:
@@ -49,15 +59,25 @@ class LLMEngine(ABC):
         )
 
     @abstractmethod
-    def generate(self, prompt: str, language: Optional[str] = None) -> Optional[str]:
-        """Send a user prompt to the LLM and return the plain-text response."""
+    def generate(
+        self,
+        prompt: str,
+        language: Optional[str] = None,
+        history: Optional[Sequence[ChatTurn]] = None,
+    ) -> Optional[str]:
+        """Send a user prompt (with optional recent chat history) to the LLM and return the plain-text response."""
         pass
 
 
 class EchoLLMEngine(LLMEngine):
     """Passthrough engine that repeats the input text without calling an LLM."""
 
-    def generate(self, prompt: str, language: Optional[str] = None) -> Optional[str]:
+    def generate(
+        self,
+        prompt: str,
+        language: Optional[str] = None,
+        history: Optional[Sequence[ChatTurn]] = None,
+    ) -> Optional[str]:
         clean_prompt = prompt.strip()
         return clean_prompt if clean_prompt else None
 
@@ -98,20 +118,35 @@ class GeminiLLMEngine(LLMEngine):
         self.max_output_tokens = max_output_tokens
         self.timeout = timeout
 
-    def generate(self, prompt: str, language: Optional[str] = None) -> Optional[str]:
+    def generate(
+        self,
+        prompt: str,
+        language: Optional[str] = None,
+        history: Optional[Sequence[ChatTurn]] = None,
+    ) -> Optional[str]:
         clean_prompt = prompt.strip()
         if not clean_prompt:
             return None
 
-        print(f"Asking Gemini ('{self.model}')...")
+        ctx_count = len(history) if history else 0
+        ctx_info = f" with {ctx_count} prior turn(s) of context" if ctx_count > 0 else ""
+        print(f"Asking Gemini ('{self.model}'{ctx_info})...")
         url = self.API_URL_TEMPLATE.format(model=self.model)
+
+        contents = []
+        if history:
+            for turn in history:
+                if turn.user_text:
+                    contents.append({"role": "user", "parts": [{"text": turn.user_text}]})
+                if turn.assistant_text:
+                    contents.append({"role": "model", "parts": [{"text": turn.assistant_text}]})
+        contents.append({"role": "user", "parts": [{"text": clean_prompt}]})
+
         payload = {
             "system_instruction": {
                 "parts": [{"text": self._build_system_instruction(language)}]
             },
-            "contents": [
-                {"role": "user", "parts": [{"text": clean_prompt}]}
-            ],
+            "contents": contents,
             "generationConfig": {
                 "temperature": self.temperature,
                 "maxOutputTokens": self.max_output_tokens,
@@ -164,23 +199,38 @@ class OpenAICompatibleLLMEngine(LLMEngine):
         self.max_output_tokens = max_output_tokens
         self.timeout = timeout
 
-    def generate(self, prompt: str, language: Optional[str] = None) -> Optional[str]:
+    def generate(
+        self,
+        prompt: str,
+        language: Optional[str] = None,
+        history: Optional[Sequence[ChatTurn]] = None,
+    ) -> Optional[str]:
         clean_prompt = prompt.strip()
         if not clean_prompt:
             return None
 
-        print(f"Asking LLM ('{self.model}' at {self.base_url})...")
+        ctx_count = len(history) if history else 0
+        ctx_info = f", {ctx_count} prior turn(s) of context" if ctx_count > 0 else ""
+        print(f"Asking LLM ('{self.model}' at {self.base_url}{ctx_info})...")
         url = f"{self.base_url}/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
+        messages = [
+            {"role": "system", "content": self._build_system_instruction(language)},
+        ]
+        if history:
+            for turn in history:
+                if turn.user_text:
+                    messages.append({"role": "user", "content": turn.user_text})
+                if turn.assistant_text:
+                    messages.append({"role": "assistant", "content": turn.assistant_text})
+        messages.append({"role": "user", "content": clean_prompt})
+
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": self._build_system_instruction(language)},
-                {"role": "user", "content": clean_prompt},
-            ],
+            "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_output_tokens,
         }

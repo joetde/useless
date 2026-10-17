@@ -4,9 +4,11 @@ from typing import Optional
 from engines import (
     AVAILABLE_PIPER_VOICES,
     DEFAULT_ALLOWED_LANGUAGES,
+    DEFAULT_CONTEXT_IDLE_TIMEOUT,
     DEFAULT_LANGUAGE,
     DEFAULT_LLM_MODELS,
     DEFAULT_LLM_PROVIDER,
+    DEFAULT_MAX_CONTEXT_TURNS,
     DEFAULT_SPEECH_SPEED,
     DEFAULT_STT_MODEL,
     DEFAULT_SYSTEM_PROMPT,
@@ -17,6 +19,8 @@ from engines import (
     PIPER_VOICE_MAP,
     PiperTTSEngine,
     RecorderEngine,
+    SESSIONS_DIR,
+    SessionLogger,
     STTEngine,
     TTSEngine,
     TranscriptionResult,
@@ -70,6 +74,7 @@ def run_pipeline(
     stt_engine: STTEngine,
     llm_engine: Optional[LLMEngine] = None,
     tts_engine: Optional[TTSEngine] = None,
+    session_logger: Optional[SessionLogger] = None,
     language: Optional[str] = DEFAULT_LANGUAGE,
 ) -> None:
     """Run the interactive record -> transcribe -> LLM -> speak loop."""
@@ -93,18 +98,45 @@ def run_pipeline(
                 continue
 
             spoken_text = result.text
+            llm_reply: Optional[str] = None
+            context_history = (
+                session_logger.get_context_for_next_turn()
+                if session_logger is not None
+                else []
+            )
+
             if llm_engine is not None:
-                llm_reply = llm_engine.generate(result.text, language=result.language)
+                llm_reply = llm_engine.generate(
+                    result.text,
+                    language=result.language,
+                    history=context_history,
+                )
                 if not llm_reply:
                     print("Warning: No response received from LLM.")
+                    if session_logger is not None:
+                        session_logger.log_turn(
+                            transcription=result,
+                            llm_response=None,
+                            context_turns_used=len(context_history),
+                        )
                     continue
                 print_llm_response(llm_reply)
                 spoken_text = llm_reply
+
+            if session_logger is not None:
+                session_logger.log_turn(
+                    transcription=result,
+                    llm_response=llm_reply,
+                    context_turns_used=len(context_history),
+                )
 
             if tts_engine:
                 tts_engine.speak(spoken_text, lang_code=result.language)
     except KeyboardInterrupt:
         pass
+    finally:
+        if session_logger is not None:
+            session_logger.close()
     print("\nExiting.")
 
 
@@ -177,6 +209,29 @@ def main() -> None:
         help="Disable LLM query and simply repeat the transcribed text back.",
     )
     parser.add_argument(
+        "--context-turns",
+        type=int,
+        default=DEFAULT_MAX_CONTEXT_TURNS,
+        help=f"Number of previous user/assistant exchanges to pass to the LLM for context continuation (default: {DEFAULT_MAX_CONTEXT_TURNS}, 0 to disable).",
+    )
+    parser.add_argument(
+        "--context-idle-timeout",
+        type=float,
+        default=DEFAULT_CONTEXT_IDLE_TIMEOUT,
+        help=f"Seconds of inactivity before automatically resetting LLM conversation context (default: {DEFAULT_CONTEXT_IDLE_TIMEOUT:.0f}s).",
+    )
+    parser.add_argument(
+        "--sessions-dir",
+        type=str,
+        default=str(SESSIONS_DIR),
+        help=f"Directory where per-session audit folders are stored (default: '{SESSIONS_DIR}').",
+    )
+    parser.add_argument(
+        "--no-session-log",
+        action="store_true",
+        help="Disable saving session transcripts and audit logs to disk.",
+    )
+    parser.add_argument(
         "--no-tts",
         action="store_true",
         help="Disable text-to-speech readback.",
@@ -224,9 +279,15 @@ def main() -> None:
         print(f"Goofy voice effect   : {args.effect}")
 
     llm_engine: Optional[LLMEngine] = None
+    resolved_model = ""
+    effective_provider = "echo" if args.no_llm else args.llm_provider
     if not args.no_llm and args.llm_provider != "echo":
         resolved_model = args.llm_model or DEFAULT_LLM_MODELS.get(args.llm_provider, "")
         print(f"LLM provider / model : {args.llm_provider} ({resolved_model})")
+        print(
+            f"Context continuation : last {max(0, args.context_turns)} turn(s) "
+            f"(idle reset: {args.context_idle_timeout:.0f}s)"
+        )
         llm_engine = create_llm_engine(
             provider=args.llm_provider,
             model=args.llm_model,
@@ -236,6 +297,23 @@ def main() -> None:
         )
     else:
         print("LLM provider / model : disabled (echo mode)")
+
+    session_logger = SessionLogger(
+        sessions_dir=args.sessions_dir,
+        max_context_turns=args.context_turns,
+        context_idle_timeout=args.context_idle_timeout,
+        session_metadata={
+            "stt_model": args.model,
+            "forced_language": args.language,
+            "allowed_languages": allowed_languages,
+            "llm_provider": effective_provider,
+            "llm_model": resolved_model or effective_provider,
+            "voice_effect": None if args.no_tts else args.effect,
+        },
+        enabled=not args.no_session_log,
+    )
+    if not args.no_session_log:
+        print(f"Session audit folder : {session_logger.session_dir}")
 
     recorder = HoldKeyAlsaRecorder(device=mic_device)
     stt_engine = FasterWhisperSTT(
@@ -263,10 +341,12 @@ def main() -> None:
         stt_engine=stt_engine,
         llm_engine=llm_engine,
         tts_engine=tts_engine,
+        session_logger=session_logger,
         language=args.language,
     )
 
 
 if __name__ == "__main__":
     main()
+
 

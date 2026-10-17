@@ -2,10 +2,12 @@ from .audio_devices import detect_usb_mic_device, detect_usb_speaker_device
 from .config import (
     AVAILABLE_PIPER_VOICES,
     DEFAULT_ALLOWED_LANGUAGES,
+    DEFAULT_CONTEXT_IDLE_TIMEOUT,
     DEFAULT_LANGUAGE,
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_MODELS,
     DEFAULT_LLM_PROVIDER,
+    DEFAULT_MAX_CONTEXT_TURNS,
     DEFAULT_NOISE_SCALE,
     DEFAULT_NOISE_W_SCALE,
     DEFAULT_PIPER_VOICE,
@@ -21,6 +23,7 @@ from .config import (
     PIPER_VOICE_MAP,
     RATE,
     RELEASE_TIMEOUT,
+    SESSIONS_DIR,
     STT_AUDIO_FILTER,
     TRIGGER_KEY,
     TRIGGER_KEY_NAME,
@@ -32,6 +35,7 @@ from .config import (
     get_language_name,
 )
 from .llm import (
+    ChatTurn,
     EchoLLMEngine,
     GeminiLLMEngine,
     LLMEngine,
@@ -40,6 +44,7 @@ from .llm import (
     create_llm_engine,
 )
 from .recorder import HoldKeyAlsaRecorder, RecorderEngine
+from .session import SessionLogger
 from .stt import (
     FasterWhisperSTT,
     STTEngine,
@@ -54,10 +59,12 @@ __all__ = [
     "detect_usb_speaker_device",
     "AVAILABLE_PIPER_VOICES",
     "DEFAULT_ALLOWED_LANGUAGES",
+    "DEFAULT_CONTEXT_IDLE_TIMEOUT",
     "DEFAULT_LANGUAGE",
     "DEFAULT_LLM_MODEL",
     "DEFAULT_LLM_MODELS",
     "DEFAULT_LLM_PROVIDER",
+    "DEFAULT_MAX_CONTEXT_TURNS",
     "DEFAULT_NOISE_SCALE",
     "DEFAULT_NOISE_W_SCALE",
     "DEFAULT_PIPER_VOICE",
@@ -73,6 +80,7 @@ __all__ = [
     "PIPER_VOICE_MAP",
     "RATE",
     "RELEASE_TIMEOUT",
+    "SESSIONS_DIR",
     "STT_AUDIO_FILTER",
     "TRIGGER_KEY",
     "TRIGGER_KEY_NAME",
@@ -82,6 +90,7 @@ __all__ = [
     "WAVE_OUTPUT_FILENAME",
     "WAVE_PREPROCESSED_FILENAME",
     "get_language_name",
+    "ChatTurn",
     "LLMEngine",
     "EchoLLMEngine",
     "GeminiLLMEngine",
@@ -90,6 +99,7 @@ __all__ = [
     "create_llm_engine",
     "RecorderEngine",
     "HoldKeyAlsaRecorder",
+    "SessionLogger",
     "STTEngine",
     "FasterWhisperSTT",
     "TranscriptionResult",
