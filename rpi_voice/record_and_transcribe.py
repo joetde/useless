@@ -4,10 +4,14 @@ from typing import Optional
 from engines import (
     AVAILABLE_PIPER_VOICES,
     DEFAULT_LANGUAGE,
+    DEFAULT_LLM_MODELS,
+    DEFAULT_LLM_PROVIDER,
     DEFAULT_SPEECH_SPEED,
+    DEFAULT_SYSTEM_PROMPT,
     DEFAULT_VOICE_EFFECT,
     FasterWhisperSTT,
     HoldKeyAlsaRecorder,
+    LLMEngine,
     PIPER_VOICE_MAP,
     PiperTTSEngine,
     RecorderEngine,
@@ -15,6 +19,7 @@ from engines import (
     TTSEngine,
     TranscriptionResult,
     VOICE_EFFECTS,
+    create_llm_engine,
     detect_usb_mic_device,
     detect_usb_speaker_device,
     get_language_name,
@@ -51,13 +56,21 @@ def print_transcription_result(result: TranscriptionResult) -> None:
         print("=" * 48)
 
 
+def print_llm_response(response_text: str) -> None:
+    """Format and display the LLM answer in the terminal."""
+    print("LLM Response:")
+    print(f"  {response_text}")
+    print("=" * 48)
+
+
 def run_pipeline(
     recorder: RecorderEngine,
     stt_engine: STTEngine,
+    llm_engine: Optional[LLMEngine] = None,
     tts_engine: Optional[TTSEngine] = None,
     language: Optional[str] = DEFAULT_LANGUAGE,
 ) -> None:
-    """Run the interactive record -> transcribe -> speak loop."""
+    """Run the interactive record -> transcribe -> LLM -> speak loop."""
     try:
         while True:
             audio_path = recorder.record()
@@ -74,8 +87,20 @@ def run_pipeline(
 
             print_transcription_result(result)
 
-            if tts_engine and result.has_speech:
-                tts_engine.speak(result.text, lang_code=result.language)
+            if not result.has_speech:
+                continue
+
+            spoken_text = result.text
+            if llm_engine is not None:
+                llm_reply = llm_engine.generate(result.text, language=result.language)
+                if not llm_reply:
+                    print("Warning: No response received from LLM.")
+                    continue
+                print_llm_response(llm_reply)
+                spoken_text = llm_reply
+
+            if tts_engine:
+                tts_engine.speak(spoken_text, lang_code=result.language)
     except KeyboardInterrupt:
         pass
     print("\nExiting.")
@@ -84,9 +109,10 @@ def run_pipeline(
 def main() -> None:
     effect_choices = list(VOICE_EFFECTS.keys()) + ["random"]
     zh_voice_choices = AVAILABLE_PIPER_VOICES["zh"]
+    llm_provider_choices = list(DEFAULT_LLM_MODELS.keys())
 
     parser = argparse.ArgumentParser(
-        description="Record audio while holding spacebar, transcribe with STT engine, and read back via TTS engine."
+        description="Record audio while holding spacebar, transcribe with STT, ask an educational LLM, and speak the answer via TTS."
     )
     parser.add_argument(
         "-l", "--language",
@@ -98,7 +124,43 @@ def main() -> None:
         "--model",
         type=str,
         default="tiny",
-        help="Whisper model size (default: 'tiny', e.g. 'base', 'small').",
+        help="Whisper STT model size (default: 'tiny', e.g. 'base', 'small').",
+    )
+    parser.add_argument(
+        "--llm-provider",
+        type=str,
+        choices=llm_provider_choices,
+        default=DEFAULT_LLM_PROVIDER,
+        help=f"LLM provider to use (default: '{DEFAULT_LLM_PROVIDER}'). Use 'echo' to simply repeat back.",
+    )
+    parser.add_argument(
+        "--llm-model",
+        type=str,
+        default=None,
+        help=f"LLM model name override (default for gemini: '{DEFAULT_LLM_MODELS['gemini']}').",
+    )
+    parser.add_argument(
+        "--llm-base-url",
+        type=str,
+        default=None,
+        help="Optional custom base URL for OpenAI-compatible or Ollama LLM providers.",
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="Optional LLM API key (defaults to GEMINI_API_KEY / OPENAI_API_KEY env var).",
+    )
+    parser.add_argument(
+        "--system-prompt",
+        type=str,
+        default=DEFAULT_SYSTEM_PROMPT,
+        help="Override the system prompt controlling LLM behavior.",
+    )
+    parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Disable LLM query and simply repeat the transcribed text back.",
     )
     parser.add_argument(
         "--no-tts",
@@ -137,6 +199,20 @@ def main() -> None:
     if not args.no_tts:
         print(f"Goofy voice effect   : {args.effect}")
 
+    llm_engine: Optional[LLMEngine] = None
+    if not args.no_llm and args.llm_provider != "echo":
+        resolved_model = args.llm_model or DEFAULT_LLM_MODELS.get(args.llm_provider, "")
+        print(f"LLM provider / model : {args.llm_provider} ({resolved_model})")
+        llm_engine = create_llm_engine(
+            provider=args.llm_provider,
+            model=args.llm_model,
+            api_key=args.api_key,
+            base_url=args.llm_base_url,
+            system_prompt=args.system_prompt,
+        )
+    else:
+        print("LLM provider / model : disabled (echo mode)")
+
     recorder = HoldKeyAlsaRecorder(device=mic_device)
     stt_engine = FasterWhisperSTT(model_size=args.model, compute_type="int8")
 
@@ -156,6 +232,7 @@ def main() -> None:
     run_pipeline(
         recorder=recorder,
         stt_engine=stt_engine,
+        llm_engine=llm_engine,
         tts_engine=tts_engine,
         language=args.language,
     )
@@ -163,3 +240,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

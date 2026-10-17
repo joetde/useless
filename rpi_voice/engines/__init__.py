@@ -2,11 +2,15 @@ from .audio_devices import detect_usb_mic_device, detect_usb_speaker_device
 from .config import (
     AVAILABLE_PIPER_VOICES,
     DEFAULT_LANGUAGE,
+    DEFAULT_LLM_MODEL,
+    DEFAULT_LLM_MODELS,
+    DEFAULT_LLM_PROVIDER,
     DEFAULT_NOISE_SCALE,
     DEFAULT_NOISE_W_SCALE,
     DEFAULT_PIPER_VOICE,
     DEFAULT_PRELOAD_LANGUAGES,
     DEFAULT_SPEECH_SPEED,
+    DEFAULT_SYSTEM_PROMPT,
     DEFAULT_VOICE_EFFECT,
     LANGUAGE_NAMES,
     PIPER_SPEAKER_MAP,
@@ -21,6 +25,14 @@ from .config import (
     WAVE_OUTPUT_FILENAME,
     get_language_name,
 )
+from .llm import (
+    EchoLLMEngine,
+    GeminiLLMEngine,
+    LLMEngine,
+    OpenAICompatibleLLMEngine,
+    clean_text_for_speech,
+    create_llm_engine,
+)
 from .recorder import HoldKeyAlsaRecorder, RecorderEngine
 from .stt import FasterWhisperSTT, STTEngine, TranscriptionResult, TranscriptionSegment
 from .tts import PiperTTSEngine, TTSEngine
@@ -30,11 +42,15 @@ __all__ = [
     "detect_usb_speaker_device",
     "AVAILABLE_PIPER_VOICES",
     "DEFAULT_LANGUAGE",
+    "DEFAULT_LLM_MODEL",
+    "DEFAULT_LLM_MODELS",
+    "DEFAULT_LLM_PROVIDER",
     "DEFAULT_NOISE_SCALE",
     "DEFAULT_NOISE_W_SCALE",
     "DEFAULT_PIPER_VOICE",
     "DEFAULT_PRELOAD_LANGUAGES",
     "DEFAULT_SPEECH_SPEED",
+    "DEFAULT_SYSTEM_PROMPT",
     "DEFAULT_VOICE_EFFECT",
     "LANGUAGE_NAMES",
     "PIPER_SPEAKER_MAP",
@@ -48,6 +64,12 @@ __all__ = [
     "VOICES_DIR",
     "WAVE_OUTPUT_FILENAME",
     "get_language_name",
+    "LLMEngine",
+    "EchoLLMEngine",
+    "GeminiLLMEngine",
+    "OpenAICompatibleLLMEngine",
+    "clean_text_for_speech",
+    "create_llm_engine",
     "RecorderEngine",
     "HoldKeyAlsaRecorder",
     "STTEngine",
@@ -57,3 +79,4 @@ __all__ = [
     "TTSEngine",
     "PiperTTSEngine",
 ]
+

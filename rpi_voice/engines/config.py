@@ -79,9 +79,30 @@ PIPER_SPEAKER_MAP = {
     "en_GB-semaine-medium": 3,
 }
 
+# Default LLM configuration
+DEFAULT_LLM_PROVIDER = "gemini"
+DEFAULT_LLM_MODELS = {
+    "gemini": "gemini-2.5-flash-lite",
+    "openai": "gpt-4o-mini",
+    "ollama": "llama3.2",
+    "echo": "echo",
+}
+DEFAULT_LLM_MODEL = DEFAULT_LLM_MODELS[DEFAULT_LLM_PROVIDER]
+
+DEFAULT_SYSTEM_PROMPT = (
+    "You are an educational voice assistant for a young child (around 4 to 8 years old). "
+    "Follow these rules strictly:\n"
+    "1. Always reply in the exact same language as the user's question (for example English, French, or Chinese).\n"
+    "2. Only provide factual, educational, and age-appropriate explanations (science, nature, math, history, language, everyday how-things-work).\n"
+    "3. Do NOT engage in roleplay, pretend play, fictional storytelling, or persona adoption. If asked to roleplay or for non-educational topics, gently redirect to an educational fact.\n"
+    "4. Keep answers short, warm, clear, and easy for a small child to understand (1 to 3 simple sentences).\n"
+    "5. Output plain spoken text only, suitable for Text-to-Speech. Never use markdown, bullet points, asterisks, symbols, or emojis."
+)
+
 
 def get_language_name(lang_code: str) -> str:
     """Return human-readable language name for an ISO language code."""
     if not lang_code:
         return "Unknown"
     return LANGUAGE_NAMES.get(lang_code, lang_code.upper())
+
