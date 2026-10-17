@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import signal
 import select
 import termios
 import tty
@@ -107,7 +108,7 @@ class HoldKeyAlsaRecorder(RecorderEngine):
                     while select.select([sys.stdin], [], [], 0)[0]:
                         chars += sys.stdin.read(1)
                     if "\x03" in chars or "q" in chars or "Q" in chars:
-                        process.terminate()
+                        process.send_signal(signal.SIGINT)
                         process.wait()
                         return None
                     if self.trigger_key in chars:
@@ -117,9 +118,9 @@ class HoldKeyAlsaRecorder(RecorderEngine):
                     if time.time() - last_event_time > self.release_timeout:
                         break
 
-            # Stop recording cleanly so WAV header is finalized
+            # Stop recording cleanly via SIGINT so ALSA flushes remaining PCM frames and updates WAV header
             if process.poll() is None:
-                process.terminate()
+                process.send_signal(signal.SIGINT)
                 try:
                     process.wait(timeout=2)
                 except subprocess.TimeoutExpired:

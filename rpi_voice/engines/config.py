@@ -1,6 +1,7 @@
 from pathlib import Path
 
 WAVE_OUTPUT_FILENAME = "/tmp/recorded_audio.wav"
+WAVE_PREPROCESSED_FILENAME = "/tmp/recorded_audio_norm.wav"
 TTS_OUTPUT_FILENAME = "/tmp/tts_output.wav"
 VOICES_DIR = Path(__file__).resolve().parent.parent / "voices"
 RATE = 16000
@@ -8,6 +9,16 @@ TRIGGER_KEY = " "        # Spacebar
 TRIGGER_KEY_NAME = "SPACE"
 RELEASE_TIMEOUT = 0.75   # Seconds without key repeat before treating as released
 DEFAULT_LANGUAGE = None  # Set to e.g. "en" or "fr" to always force a language, or None for auto-detect
+DEFAULT_STT_MODEL = "base"  # Upgraded from 'tiny' for much better multilingual & child-speech accuracy
+DEFAULT_STT_BEAM_SIZE = 3   # Balanced beam size (avoids over-searching into English loanwords while staying fast)
+DEFAULT_ALLOWED_LANGUAGES = ("en", "fr", "zh")  # Restrict auto-detection to active languages (None for all 99)
+DEFAULT_VAD_PARAMETERS = {
+    "min_silence_duration_ms": 400,
+    "speech_pad_ms": 400,
+    "threshold": 0.35,
+}
+# Voice bandpass (80Hz-7.5kHz) + dynamic audio normalization to boost quiet mic levels without clipping
+STT_AUDIO_FILTER = "highpass=f=80,lowpass=f=7500,dynaudnorm=f=150:g=15:p=0.9:m=10"
 DEFAULT_SPEECH_SPEED = 1.0  # length_scale > 1.0 speaks slower, < 1.0 speaks faster
 DEFAULT_NOISE_SCALE = 0.85  # Higher noise_scale (default 0.667) adds more lively/goofy pitch & tone variation
 DEFAULT_NOISE_W_SCALE = 0.9  # Phoneme duration variability for more animated cadence

@@ -1,6 +1,7 @@
 from .audio_devices import detect_usb_mic_device, detect_usb_speaker_device
 from .config import (
     AVAILABLE_PIPER_VOICES,
+    DEFAULT_ALLOWED_LANGUAGES,
     DEFAULT_LANGUAGE,
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_MODELS,
@@ -10,19 +11,24 @@ from .config import (
     DEFAULT_PIPER_VOICE,
     DEFAULT_PRELOAD_LANGUAGES,
     DEFAULT_SPEECH_SPEED,
+    DEFAULT_STT_BEAM_SIZE,
+    DEFAULT_STT_MODEL,
     DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_VAD_PARAMETERS,
     DEFAULT_VOICE_EFFECT,
     LANGUAGE_NAMES,
     PIPER_SPEAKER_MAP,
     PIPER_VOICE_MAP,
     RATE,
     RELEASE_TIMEOUT,
+    STT_AUDIO_FILTER,
     TRIGGER_KEY,
     TRIGGER_KEY_NAME,
     TTS_OUTPUT_FILENAME,
     VOICE_EFFECTS,
     VOICES_DIR,
     WAVE_OUTPUT_FILENAME,
+    WAVE_PREPROCESSED_FILENAME,
     get_language_name,
 )
 from .llm import (
@@ -34,13 +40,20 @@ from .llm import (
     create_llm_engine,
 )
 from .recorder import HoldKeyAlsaRecorder, RecorderEngine
-from .stt import FasterWhisperSTT, STTEngine, TranscriptionResult, TranscriptionSegment
+from .stt import (
+    FasterWhisperSTT,
+    STTEngine,
+    TranscriptionResult,
+    TranscriptionSegment,
+    preprocess_audio_file,
+)
 from .tts import PiperTTSEngine, TTSEngine
 
 __all__ = [
     "detect_usb_mic_device",
     "detect_usb_speaker_device",
     "AVAILABLE_PIPER_VOICES",
+    "DEFAULT_ALLOWED_LANGUAGES",
     "DEFAULT_LANGUAGE",
     "DEFAULT_LLM_MODEL",
     "DEFAULT_LLM_MODELS",
@@ -50,19 +63,24 @@ __all__ = [
     "DEFAULT_PIPER_VOICE",
     "DEFAULT_PRELOAD_LANGUAGES",
     "DEFAULT_SPEECH_SPEED",
+    "DEFAULT_STT_BEAM_SIZE",
+    "DEFAULT_STT_MODEL",
     "DEFAULT_SYSTEM_PROMPT",
+    "DEFAULT_VAD_PARAMETERS",
     "DEFAULT_VOICE_EFFECT",
     "LANGUAGE_NAMES",
     "PIPER_SPEAKER_MAP",
     "PIPER_VOICE_MAP",
     "RATE",
     "RELEASE_TIMEOUT",
+    "STT_AUDIO_FILTER",
     "TRIGGER_KEY",
     "TRIGGER_KEY_NAME",
     "TTS_OUTPUT_FILENAME",
     "VOICE_EFFECTS",
     "VOICES_DIR",
     "WAVE_OUTPUT_FILENAME",
+    "WAVE_PREPROCESSED_FILENAME",
     "get_language_name",
     "LLMEngine",
     "EchoLLMEngine",
@@ -76,6 +94,7 @@ __all__ = [
     "FasterWhisperSTT",
     "TranscriptionResult",
     "TranscriptionSegment",
+    "preprocess_audio_file",
     "TTSEngine",
     "PiperTTSEngine",
 ]

@@ -3,10 +3,12 @@ from typing import Optional
 
 from engines import (
     AVAILABLE_PIPER_VOICES,
+    DEFAULT_ALLOWED_LANGUAGES,
     DEFAULT_LANGUAGE,
     DEFAULT_LLM_MODELS,
     DEFAULT_LLM_PROVIDER,
     DEFAULT_SPEECH_SPEED,
+    DEFAULT_STT_MODEL,
     DEFAULT_SYSTEM_PROMPT,
     DEFAULT_VOICE_EFFECT,
     FasterWhisperSTT,
@@ -35,7 +37,7 @@ def print_transcription_result(result: TranscriptionResult) -> None:
         lang_full = get_language_name(result.language)
         print(f"Forced Language   : {lang_full} ({result.language})")
     elif result.top_languages:
-        print("Top 3 Language Matches:")
+        print("Top Language Matches:")
         for rank, (code, prob) in enumerate(result.top_languages[:3], start=1):
             name = get_language_name(code)
             marker = " (used for transcription)" if rank == 1 else ""
@@ -110,6 +112,7 @@ def main() -> None:
     effect_choices = list(VOICE_EFFECTS.keys()) + ["random"]
     zh_voice_choices = AVAILABLE_PIPER_VOICES["zh"]
     llm_provider_choices = list(DEFAULT_LLM_MODELS.keys())
+    default_allowed_str = ",".join(DEFAULT_ALLOWED_LANGUAGES) if DEFAULT_ALLOWED_LANGUAGES else "all"
 
     parser = argparse.ArgumentParser(
         description="Record audio while holding spacebar, transcribe with STT, ask an educational LLM, and speak the answer via TTS."
@@ -121,10 +124,21 @@ def main() -> None:
         help="Force transcription and TTS language using ISO code (e.g., 'en', 'fr', 'zh', 'es'). Omit for auto-detection.",
     )
     parser.add_argument(
+        "--allowed-languages",
+        type=str,
+        default=default_allowed_str,
+        help=f"Comma-separated ISO codes to restrict language auto-detection (default: '{default_allowed_str}'). Pass 'all' for all 99 Whisper languages.",
+    )
+    parser.add_argument(
         "--model",
         type=str,
-        default="tiny",
-        help="Whisper STT model size (default: 'tiny', e.g. 'base', 'small').",
+        default=DEFAULT_STT_MODEL,
+        help=f"Whisper STT model size (default: '{DEFAULT_STT_MODEL}', e.g. 'tiny', 'base', 'small').",
+    )
+    parser.add_argument(
+        "--no-audio-preprocess",
+        action="store_true",
+        help="Disable FFmpeg voice bandpass filter and dynamic volume normalization before STT.",
     )
     parser.add_argument(
         "--llm-provider",
@@ -189,6 +203,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    allowed_languages = None
+    if args.allowed_languages and args.allowed_languages.strip().lower() != "all":
+        allowed_languages = [
+            code.strip().lower()
+            for code in args.allowed_languages.split(",")
+            if code.strip()
+        ]
+
     mic_device = detect_usb_mic_device()
     speaker_device = detect_usb_speaker_device()
     print(f"Target mic device    : {mic_device}")
@@ -196,6 +218,8 @@ def main() -> None:
     if args.language:
         lang_name = get_language_name(args.language)
         print(f"Forced language      : {lang_name} ({args.language})")
+    elif allowed_languages:
+        print(f"Allowed languages    : {', '.join(allowed_languages)}")
     if not args.no_tts:
         print(f"Goofy voice effect   : {args.effect}")
 
@@ -214,7 +238,12 @@ def main() -> None:
         print("LLM provider / model : disabled (echo mode)")
 
     recorder = HoldKeyAlsaRecorder(device=mic_device)
-    stt_engine = FasterWhisperSTT(model_size=args.model, compute_type="int8")
+    stt_engine = FasterWhisperSTT(
+        model_size=args.model,
+        compute_type="int8",
+        allowed_languages=allowed_languages,
+        preprocess_audio=not args.no_audio_preprocess,
+    )
 
     tts_engine: Optional[TTSEngine] = None
     if not args.no_tts:
