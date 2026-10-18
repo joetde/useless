@@ -98,7 +98,7 @@ PIPER_SPEAKER_MAP = {
 # Default LLM configuration
 DEFAULT_LLM_PROVIDER = "gemini"
 DEFAULT_LLM_MODELS = {
-    "gemini": "gemini-2.5-flash-lite",
+    "gemini": "gemini-3.5-flash-lite",
     "openai": "gpt-4o-mini",
     "ollama": "llama3.2",
     "echo": "echo",
