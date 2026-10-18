@@ -15,6 +15,8 @@ from .config import (
     TRIGGER_KEY,
     TRIGGER_KEY_NAME,
     RELEASE_TIMEOUT,
+    DEFAULT_GPIO_PIN,
+    DEFAULT_GPIO_BOUNCE_TIME,
 )
 
 
@@ -31,6 +33,135 @@ class RecorderEngine(ABC):
             - `None` if the user requested to quit.
         """
         pass
+
+    def close(self) -> None:
+        """Release any hardware resources held by the recorder."""
+        pass
+
+
+class GPIOSwitchAlsaRecorder(RecorderEngine):
+    """
+    Waits for a physical switch connected between a GPIO pin (default BCM 21, physical pin 40)
+    and Ground to be closed, records audio via ALSA `arecord` while closed, and stops
+    when the switch is opened.
+    """
+
+    def __init__(
+        self,
+        device: str,
+        gpio_pin: int = DEFAULT_GPIO_PIN,
+        rate: int = RATE,
+        bounce_time: float = DEFAULT_GPIO_BOUNCE_TIME,
+    ):
+        from gpiozero import Button
+
+        self.device = device
+        self.gpio_pin = gpio_pin
+        self.rate = rate
+        self.bounce_time = bounce_time
+        self.button = Button(gpio_pin, pull_up=True, bounce_time=bounce_time)
+
+    def close(self) -> None:
+        if getattr(self, "button", None) is not None:
+            self.button.close()
+            self.button = None
+
+    def _check_quit_key(self, use_stdin: bool) -> bool:
+        """Non-blocking check if 'q' or Ctrl+C was pressed on stdin."""
+        if not use_stdin:
+            return False
+        rlist, _, _ = select.select([sys.stdin], [], [], 0)
+        if rlist:
+            chars = ""
+            while select.select([sys.stdin], [], [], 0)[0]:
+                chars += sys.stdin.read(1)
+            if "\x03" in chars or "q" in chars or "Q" in chars:
+                return True
+        return False
+
+    def record(self, output_file: str = WAVE_OUTPUT_FILENAME) -> Optional[str]:
+        use_stdin = sys.stdin.isatty()
+        fd = None
+        old_settings = None
+
+        if use_stdin:
+            try:
+                fd = sys.stdin.fileno()
+                old_settings = termios.tcgetattr(fd)
+            except (termios.error, ValueError, OSError):
+                use_stdin = False
+
+        print(
+            f"\n[Ready] Close switch on GPIO {self.gpio_pin} to record (open to stop)"
+            + (", or press 'q' to quit..." if use_stdin else "...")
+        )
+
+        try:
+            if use_stdin and fd is not None:
+                tty.setcbreak(fd)
+
+            # Wait for switch to be closed (is_pressed is True when connected to GND)
+            while not self.button.is_pressed:
+                if self._check_quit_key(use_stdin):
+                    return None
+                time.sleep(0.02)
+
+            # Remove previous file so we can verify fresh recording
+            if os.path.exists(output_file):
+                os.remove(output_file)
+
+            cmd = [
+                "arecord",
+                "-D", self.device,
+                "-f", "S16_LE",
+                "-r", str(self.rate),
+                "-c", "1",
+                output_file,
+            ]
+            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+            start_time = time.time()
+
+            while self.button.is_pressed:
+                elapsed = time.time() - start_time
+                print(
+                    f"\r  * [RECORDING] {elapsed:4.1f}s (Keep switch on GPIO {self.gpio_pin} closed...) ",
+                    end="",
+                    flush=True,
+                )
+
+                # Check if arecord exited prematurely (e.g. device error)
+                if process.poll() is not None:
+                    break
+
+                if self._check_quit_key(use_stdin):
+                    process.send_signal(signal.SIGINT)
+                    process.wait()
+                    return None
+
+                time.sleep(0.03)
+
+            # Stop recording cleanly via SIGINT so ALSA flushes remaining PCM frames and updates WAV header
+            if process.poll() is None:
+                process.send_signal(signal.SIGINT)
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+
+            total_time = time.time() - start_time
+            print(f"\r  * [RECORDING] Stopped ({total_time:.1f}s). Processing audio...          ")
+
+        finally:
+            if use_stdin and fd is not None and old_settings is not None:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+        if not os.path.exists(output_file) or os.path.getsize(output_file) <= 44:
+            print("Warning: Recording failed or was too short.")
+            return ""
+
+        print(f"* Audio saved to {output_file} ({os.path.getsize(output_file):,} bytes)")
+        return output_file
 
 
 class HoldKeyAlsaRecorder(RecorderEngine):

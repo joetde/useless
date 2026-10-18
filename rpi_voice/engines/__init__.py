@@ -3,6 +3,8 @@ from .config import (
     AVAILABLE_PIPER_VOICES,
     DEFAULT_ALLOWED_LANGUAGES,
     DEFAULT_CONTEXT_IDLE_TIMEOUT,
+    DEFAULT_GPIO_BOUNCE_TIME,
+    DEFAULT_GPIO_PIN,
     DEFAULT_LANGUAGE,
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_MODELS,
@@ -43,7 +45,7 @@ from .llm import (
     clean_text_for_speech,
     create_llm_engine,
 )
-from .recorder import HoldKeyAlsaRecorder, RecorderEngine
+from .recorder import GPIOSwitchAlsaRecorder, HoldKeyAlsaRecorder, RecorderEngine
 from .session import SessionLogger
 from .stt import (
     FasterWhisperSTT,
@@ -60,6 +62,8 @@ __all__ = [
     "AVAILABLE_PIPER_VOICES",
     "DEFAULT_ALLOWED_LANGUAGES",
     "DEFAULT_CONTEXT_IDLE_TIMEOUT",
+    "DEFAULT_GPIO_BOUNCE_TIME",
+    "DEFAULT_GPIO_PIN",
     "DEFAULT_LANGUAGE",
     "DEFAULT_LLM_MODEL",
     "DEFAULT_LLM_MODELS",
@@ -98,6 +102,7 @@ __all__ = [
     "clean_text_for_speech",
     "create_llm_engine",
     "RecorderEngine",
+    "GPIOSwitchAlsaRecorder",
     "HoldKeyAlsaRecorder",
     "SessionLogger",
     "STTEngine",

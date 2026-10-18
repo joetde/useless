@@ -5,6 +5,7 @@ from engines import (
     AVAILABLE_PIPER_VOICES,
     DEFAULT_ALLOWED_LANGUAGES,
     DEFAULT_CONTEXT_IDLE_TIMEOUT,
+    DEFAULT_GPIO_PIN,
     DEFAULT_LANGUAGE,
     DEFAULT_LLM_MODELS,
     DEFAULT_LLM_PROVIDER,
@@ -14,6 +15,7 @@ from engines import (
     DEFAULT_SYSTEM_PROMPT,
     DEFAULT_VOICE_EFFECT,
     FasterWhisperSTT,
+    GPIOSwitchAlsaRecorder,
     HoldKeyAlsaRecorder,
     LLMEngine,
     PIPER_VOICE_MAP,
@@ -135,6 +137,7 @@ def run_pipeline(
     except KeyboardInterrupt:
         pass
     finally:
+        recorder.close()
         if session_logger is not None:
             session_logger.close()
     print("\nExiting.")
@@ -147,7 +150,18 @@ def main() -> None:
     default_allowed_str = ",".join(DEFAULT_ALLOWED_LANGUAGES) if DEFAULT_ALLOWED_LANGUAGES else "all"
 
     parser = argparse.ArgumentParser(
-        description="Record audio while holding spacebar, transcribe with STT, ask an educational LLM, and speak the answer via TTS."
+        description="Record audio while a GPIO switch is closed (or spacebar held), transcribe with STT, ask an educational LLM, and speak the answer via TTS."
+    )
+    parser.add_argument(
+        "--gpio-pin",
+        type=int,
+        default=DEFAULT_GPIO_PIN,
+        help=f"BCM GPIO pin number for the physical switch connected to GND (default: {DEFAULT_GPIO_PIN}, physical pin 40).",
+    )
+    parser.add_argument(
+        "--keyboard",
+        action="store_true",
+        help="Use terminal spacebar hold trigger instead of the physical GPIO switch.",
     )
     parser.add_argument(
         "-l", "--language",
@@ -270,6 +284,10 @@ def main() -> None:
     speaker_device = detect_usb_speaker_device()
     print(f"Target mic device    : {mic_device}")
     print(f"Target speaker device: {speaker_device}")
+    if args.keyboard:
+        print("Recording trigger    : Keyboard (SPACE)")
+    else:
+        print(f"Recording trigger    : Physical switch on GPIO {args.gpio_pin} (active LOW to GND)")
     if args.language:
         lang_name = get_language_name(args.language)
         print(f"Forced language      : {lang_name} ({args.language})")
@@ -315,7 +333,10 @@ def main() -> None:
     if not args.no_session_log:
         print(f"Session audit folder : {session_logger.session_dir}")
 
-    recorder = HoldKeyAlsaRecorder(device=mic_device)
+    if args.keyboard:
+        recorder: RecorderEngine = HoldKeyAlsaRecorder(device=mic_device)
+    else:
+        recorder = GPIOSwitchAlsaRecorder(device=mic_device, gpio_pin=args.gpio_pin)
     stt_engine = FasterWhisperSTT(
         model_size=args.model,
         compute_type="int8",
