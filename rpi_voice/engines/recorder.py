@@ -6,8 +6,12 @@ import select
 import termios
 import tty
 import subprocess
+import atexit
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .led import StatusLED
 
 from .config import (
     WAVE_OUTPUT_FILENAME,
@@ -52,6 +56,7 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
         gpio_pin: int = DEFAULT_GPIO_PIN,
         rate: int = RATE,
         bounce_time: float = DEFAULT_GPIO_BOUNCE_TIME,
+        status_led: Optional["StatusLED"] = None,
     ):
         from gpiozero import Button
 
@@ -59,11 +64,32 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
         self.gpio_pin = gpio_pin
         self.rate = rate
         self.bounce_time = bounce_time
+        self.status_led = status_led
         self.button = Button(gpio_pin, pull_up=True, bounce_time=bounce_time)
+        atexit.register(self.close)
 
     def close(self) -> None:
         if getattr(self, "button", None) is not None:
-            self.button.close()
+            pin_obj = getattr(self.button, "pin", None)
+            factory = getattr(pin_obj, "factory", None)
+            chip_handle = getattr(factory, "_handle", None)
+            pin_info = getattr(pin_obj, "info", None)
+            pin_num = getattr(pin_obj, "_number", self.gpio_pin)
+            try:
+                self.button.close()
+            except Exception:
+                pass
+            if factory is not None and pin_info is not None:
+                getattr(factory, "pins", {}).pop(pin_info, None)
+            if chip_handle is not None and pin_num is not None:
+                try:
+                    import lgpio
+
+                    lgpio.gpio_free(chip_handle, pin_num)
+                    lgpio.gpio_claim_input(chip_handle, pin_num, lgpio.SET_PULL_DOWN)
+                    lgpio.gpio_free(chip_handle, pin_num)
+                except Exception:
+                    pass
             self.button = None
 
     def _check_quit_key(self, use_stdin: bool) -> bool:
@@ -96,6 +122,9 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
             + (", or press 'q' to quit..." if use_stdin else "...")
         )
 
+        if self.status_led is not None:
+            self.status_led.pulse_ready()
+
         try:
             if use_stdin and fd is not None:
                 tty.setcbreak(fd)
@@ -103,8 +132,14 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
             # Wait for switch to be closed (is_pressed is True when connected to GND)
             while not self.button.is_pressed:
                 if self._check_quit_key(use_stdin):
+                    if self.status_led is not None:
+                        self.status_led.off()
                     return None
                 time.sleep(0.02)
+
+            # Switch is pressed: turn LED off while recording
+            if self.status_led is not None:
+                self.status_led.off()
 
             # Remove previous file so we can verify fresh recording
             if os.path.exists(output_file):
@@ -140,6 +175,10 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
                     return None
 
                 time.sleep(0.03)
+
+            # Switch released: turn LED solid while stopping & processing
+            if self.status_led is not None:
+                self.status_led.solid_thinking()
 
             # Stop recording cleanly via SIGINT so ALSA flushes remaining PCM frames and updates WAV header
             if process.poll() is None:
@@ -177,18 +216,23 @@ class HoldKeyAlsaRecorder(RecorderEngine):
         trigger_key: str = TRIGGER_KEY,
         trigger_key_name: str = TRIGGER_KEY_NAME,
         release_timeout: float = RELEASE_TIMEOUT,
+        status_led: Optional["StatusLED"] = None,
     ):
         self.device = device
         self.rate = rate
         self.trigger_key = trigger_key
         self.trigger_key_name = trigger_key_name
         self.release_timeout = release_timeout
+        self.status_led = status_led
 
     def record(self, output_file: str = WAVE_OUTPUT_FILENAME) -> Optional[str]:
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
 
         print(f"\n[Ready] Hold [{self.trigger_key_name}] to record (release to stop), or press 'q' to quit...")
+
+        if self.status_led is not None:
+            self.status_led.pulse_ready()
 
         try:
             tty.setcbreak(fd)
@@ -199,9 +243,15 @@ class HoldKeyAlsaRecorder(RecorderEngine):
                 if rlist:
                     ch = sys.stdin.read(1)
                     if ch in ("q", "Q", "\x03"):  # 'q' or Ctrl+C
+                        if self.status_led is not None:
+                            self.status_led.off()
                         return None
                     if ch == self.trigger_key:
                         break
+
+            # Key pressed: turn LED off while recording
+            if self.status_led is not None:
+                self.status_led.off()
 
             # Remove previous file so we can verify fresh recording
             if os.path.exists(output_file):
@@ -248,6 +298,10 @@ class HoldKeyAlsaRecorder(RecorderEngine):
                     # No key repeat received within timeout -> key was released
                     if time.time() - last_event_time > self.release_timeout:
                         break
+
+            # Key released: turn LED solid while stopping & processing
+            if self.status_led is not None:
+                self.status_led.solid_thinking()
 
             # Stop recording cleanly via SIGINT so ALSA flushes remaining PCM frames and updates WAV header
             if process.poll() is None:

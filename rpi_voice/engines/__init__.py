@@ -6,6 +6,9 @@ from .config import (
     DEFAULT_GPIO_BOUNCE_TIME,
     DEFAULT_GPIO_PIN,
     DEFAULT_LANGUAGE,
+    DEFAULT_LED_GPIO_PIN,
+    DEFAULT_LED_PULSE_FADE_IN,
+    DEFAULT_LED_PULSE_FADE_OUT,
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_MODELS,
     DEFAULT_LLM_PROVIDER,
@@ -36,6 +39,7 @@ from .config import (
     WAVE_PREPROCESSED_FILENAME,
     get_language_name,
 )
+from .led import StatusLED
 from .llm import (
     ChatTurn,
     EchoLLMEngine,
@@ -65,6 +69,9 @@ __all__ = [
     "DEFAULT_GPIO_BOUNCE_TIME",
     "DEFAULT_GPIO_PIN",
     "DEFAULT_LANGUAGE",
+    "DEFAULT_LED_GPIO_PIN",
+    "DEFAULT_LED_PULSE_FADE_IN",
+    "DEFAULT_LED_PULSE_FADE_OUT",
     "DEFAULT_LLM_MODEL",
     "DEFAULT_LLM_MODELS",
     "DEFAULT_LLM_PROVIDER",
@@ -94,6 +101,7 @@ __all__ = [
     "WAVE_OUTPUT_FILENAME",
     "WAVE_PREPROCESSED_FILENAME",
     "get_language_name",
+    "StatusLED",
     "ChatTurn",
     "LLMEngine",
     "EchoLLMEngine",

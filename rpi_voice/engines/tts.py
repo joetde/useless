@@ -4,9 +4,12 @@ import wave
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Union
+from typing import Dict, Iterable, Optional, TYPE_CHECKING, Union
 from piper import PiperVoice, SynthesisConfig
 from piper.download_voices import download_voice
+
+if TYPE_CHECKING:
+    from .led import StatusLED
 
 from .config import (
     TTS_OUTPUT_FILENAME,
@@ -47,6 +50,7 @@ class PiperTTSEngine(TTSEngine):
         voice_map: Optional[Dict[str, str]] = None,
         speaker_map: Optional[Dict[str, int]] = None,
         default_voice: str = DEFAULT_PIPER_VOICE,
+        status_led: Optional["StatusLED"] = None,
     ):
         self.speaker_device = speaker_device
         self.voices_dir = Path(voices_dir)
@@ -58,6 +62,7 @@ class PiperTTSEngine(TTSEngine):
         self.voice_map = dict(voice_map) if voice_map is not None else dict(PIPER_VOICE_MAP)
         self.speaker_map = dict(speaker_map) if speaker_map is not None else dict(PIPER_SPEAKER_MAP)
         self.default_voice = default_voice
+        self.status_led = status_led
         self.loaded_voices: Dict[str, PiperVoice] = {}
 
     def get_voice_name(self, lang_code: str) -> str:
@@ -184,12 +189,16 @@ class PiperTTSEngine(TTSEngine):
         """Synthesize text to speech and play it through the configured speaker."""
         wav_path = self.synthesize_to_file(text, lang_code=lang_code, output_wav=output_wav)
         if not wav_path:
+            if self.status_led is not None:
+                self.status_led.off()
             return
 
         effect_label = getattr(self, "_last_applied_effect", "none")
         voice_name = self.get_voice_name(lang_code)
         fx_info = f", effect: {effect_label}" if effect_label != "none" else ""
         print(f"Speaking back ({get_language_name(lang_code)} [{voice_name}{fx_info}])...")
+        if self.status_led is not None:
+            self.status_led.off()
         subprocess.run(
             ["aplay", "-q", "-D", self.speaker_device, wav_path],
             check=False,

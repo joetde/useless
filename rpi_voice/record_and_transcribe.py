@@ -1,4 +1,5 @@
 import argparse
+import signal
 from typing import Optional
 
 from engines import (
@@ -7,6 +8,7 @@ from engines import (
     DEFAULT_CONTEXT_IDLE_TIMEOUT,
     DEFAULT_GPIO_PIN,
     DEFAULT_LANGUAGE,
+    DEFAULT_LED_GPIO_PIN,
     DEFAULT_LLM_MODELS,
     DEFAULT_LLM_PROVIDER,
     DEFAULT_MAX_CONTEXT_TURNS,
@@ -24,6 +26,7 @@ from engines import (
     SESSIONS_DIR,
     SessionLogger,
     STTEngine,
+    StatusLED,
     TTSEngine,
     TranscriptionResult,
     VOICE_EFFECTS,
@@ -77,6 +80,7 @@ def run_pipeline(
     llm_engine: Optional[LLMEngine] = None,
     tts_engine: Optional[TTSEngine] = None,
     session_logger: Optional[SessionLogger] = None,
+    status_led: Optional[StatusLED] = None,
     language: Optional[str] = DEFAULT_LANGUAGE,
 ) -> None:
     """Run the interactive record -> transcribe -> LLM -> speak loop."""
@@ -89,6 +93,10 @@ def run_pipeline(
             if not audio_path:
                 # Recording attempt failed or was too short; continue loop
                 continue
+
+            # Ensure LED is solid while thinking (STT, LLM, TTS synthesis)
+            if status_led is not None:
+                status_led.solid_thinking()
 
             result = stt_engine.transcribe(audio_path, language=language)
             if result is None:
@@ -134,10 +142,14 @@ def run_pipeline(
 
             if tts_engine:
                 tts_engine.speak(spoken_text, lang_code=result.language)
+            elif status_led is not None:
+                status_led.off()
     except KeyboardInterrupt:
         pass
     finally:
         recorder.close()
+        if status_led is not None:
+            status_led.close()
         if session_logger is not None:
             session_logger.close()
     print("\nExiting.")
@@ -157,6 +169,17 @@ def main() -> None:
         type=int,
         default=DEFAULT_GPIO_PIN,
         help=f"BCM GPIO pin number for the physical switch connected to GND (default: {DEFAULT_GPIO_PIN}, physical pin 40).",
+    )
+    parser.add_argument(
+        "--led-pin",
+        type=int,
+        default=DEFAULT_LED_GPIO_PIN,
+        help=f"BCM GPIO pin number for the status LED connected to GND (default: {DEFAULT_LED_GPIO_PIN}, physical pin 33).",
+    )
+    parser.add_argument(
+        "--no-led",
+        action="store_true",
+        help="Disable the GPIO status LED.",
     )
     parser.add_argument(
         "--keyboard",
@@ -288,6 +311,10 @@ def main() -> None:
         print("Recording trigger    : Keyboard (SPACE)")
     else:
         print(f"Recording trigger    : Physical switch on GPIO {args.gpio_pin} (active LOW to GND)")
+    if args.no_led:
+        print("Status LED           : disabled")
+    else:
+        print(f"Status LED           : GPIO {args.led_pin} (pulsing=ready, off=recording, solid=thinking)")
     if args.language:
         lang_name = get_language_name(args.language)
         print(f"Forced language      : {lang_name} ({args.language})")
@@ -333,38 +360,64 @@ def main() -> None:
     if not args.no_session_log:
         print(f"Session audit folder : {session_logger.session_dir}")
 
-    if args.keyboard:
-        recorder: RecorderEngine = HoldKeyAlsaRecorder(device=mic_device)
-    else:
-        recorder = GPIOSwitchAlsaRecorder(device=mic_device, gpio_pin=args.gpio_pin)
-    stt_engine = FasterWhisperSTT(
-        model_size=args.model,
-        compute_type="int8",
-        allowed_languages=allowed_languages,
-        preprocess_audio=not args.no_audio_preprocess,
-    )
+    status_led: Optional[StatusLED] = None
+    recorder: Optional[RecorderEngine] = None
 
-    tts_engine: Optional[TTSEngine] = None
-    if not args.no_tts:
-        custom_voice_map = dict(PIPER_VOICE_MAP)
-        custom_voice_map["zh"] = args.zh_voice
-        piper_tts = PiperTTSEngine(
-            speaker_device=speaker_device,
-            length_scale=args.speed,
-            voice_effect=args.effect,
-            voice_map=custom_voice_map,
+    def _handle_termination(signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _handle_termination)
+    signal.signal(signal.SIGTERM, _handle_termination)
+
+    try:
+        status_led = StatusLED(gpio_pin=None if args.no_led else args.led_pin)
+
+        if args.keyboard:
+            recorder = HoldKeyAlsaRecorder(device=mic_device, status_led=status_led)
+        else:
+            recorder = GPIOSwitchAlsaRecorder(
+                device=mic_device,
+                gpio_pin=args.gpio_pin,
+                status_led=status_led,
+            )
+        stt_engine = FasterWhisperSTT(
+            model_size=args.model,
+            compute_type="int8",
+            allowed_languages=allowed_languages,
+            preprocess_audio=not args.no_audio_preprocess,
         )
-        piper_tts.preload_voices(forced_language=args.language)
-        tts_engine = piper_tts
 
-    run_pipeline(
-        recorder=recorder,
-        stt_engine=stt_engine,
-        llm_engine=llm_engine,
-        tts_engine=tts_engine,
-        session_logger=session_logger,
-        language=args.language,
-    )
+        tts_engine: Optional[TTSEngine] = None
+        if not args.no_tts:
+            custom_voice_map = dict(PIPER_VOICE_MAP)
+            custom_voice_map["zh"] = args.zh_voice
+            piper_tts = PiperTTSEngine(
+                speaker_device=speaker_device,
+                length_scale=args.speed,
+                voice_effect=args.effect,
+                voice_map=custom_voice_map,
+                status_led=status_led,
+            )
+            piper_tts.preload_voices(forced_language=args.language)
+            tts_engine = piper_tts
+
+        run_pipeline(
+            recorder=recorder,
+            stt_engine=stt_engine,
+            llm_engine=llm_engine,
+            tts_engine=tts_engine,
+            session_logger=session_logger,
+            status_led=status_led,
+            language=args.language,
+        )
+    except KeyboardInterrupt:
+        print("\nInterrupted. Cleaning up GPIO...")
+    finally:
+        if recorder is not None:
+            recorder.close()
+        if status_led is not None:
+            status_led.close()
+        session_logger.close()
 
 
 if __name__ == "__main__":
