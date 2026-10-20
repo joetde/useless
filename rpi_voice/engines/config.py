@@ -10,6 +10,10 @@ TRIGGER_KEY_NAME = "SPACE"
 RELEASE_TIMEOUT = 0.75   # Seconds without key repeat before treating as released
 DEFAULT_GPIO_PIN = 21    # Physical pin 40 (BCM GPIO 21), connected between GPIO 21 and GND
 DEFAULT_GPIO_BOUNCE_TIME = 0.05  # Seconds of debounce time for physical switch
+DEFAULT_LANG_SWITCH_PIN_1 = 2    # Physical pin 3 (BCM GPIO 2): switch state I -> French ('fr')
+DEFAULT_LANG_SWITCH_PIN_2 = 3    # Physical pin 5 (BCM GPIO 3): switch state II -> Chinese ('zh')
+DEFAULT_LANG_SWITCH_SETTLE_TIME = 0.20  # Seconds switch state must remain stable before triggering
+TTS_LANG_SWITCH_FILENAME = "/tmp/tts_lang_switch.wav"
 DEFAULT_LED_GPIO_PIN = 13        # Physical pin 33 (BCM GPIO 13), LED connected between GPIO 13 and GND
 DEFAULT_LED_PULSE_FADE_IN = 1.0  # Seconds for LED fade-in when pulsing in Ready state
 DEFAULT_LED_PULSE_FADE_OUT = 1.0 # Seconds for LED fade-out when pulsing in Ready state
@@ -48,6 +52,13 @@ LANGUAGE_NAMES = {
     "zh": "Chinese", "ja": "Japanese", "ko": "Korean", "ar": "Arabic",
     "hi": "Hindi", "pl": "Polish", "uk": "Ukrainian", "sv": "Swedish",
     "no": "Norwegian", "fi": "Finnish", "da": "Danish", "tr": "Turkish",
+}
+
+# Spoken announcements when switching languages via the physical GPIO switch
+LANGUAGE_SWITCH_ANNOUNCEMENTS = {
+    "en": "Now switching to English.",
+    "fr": "Passage au français.",
+    "zh": "现在切换到中文。",
 }
 
 # Expressive Piper neural voices mapped by ISO language code

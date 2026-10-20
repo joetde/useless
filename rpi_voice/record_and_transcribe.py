@@ -7,6 +7,8 @@ from engines import (
     DEFAULT_ALLOWED_LANGUAGES,
     DEFAULT_CONTEXT_IDLE_TIMEOUT,
     DEFAULT_GPIO_PIN,
+    DEFAULT_LANG_SWITCH_PIN_1,
+    DEFAULT_LANG_SWITCH_PIN_2,
     DEFAULT_LANGUAGE,
     DEFAULT_LED_GPIO_PIN,
     DEFAULT_LLM_MODELS,
@@ -20,6 +22,7 @@ from engines import (
     GPIOSwitchAlsaRecorder,
     HoldKeyAlsaRecorder,
     LLMEngine,
+    LanguageSwitch,
     PIPER_VOICE_MAP,
     PiperTTSEngine,
     RecorderEngine,
@@ -82,6 +85,7 @@ def run_pipeline(
     session_logger: Optional[SessionLogger] = None,
     status_led: Optional[StatusLED] = None,
     language: Optional[str] = DEFAULT_LANGUAGE,
+    language_switch: Optional[LanguageSwitch] = None,
 ) -> None:
     """Run the interactive record -> transcribe -> LLM -> speak loop."""
     try:
@@ -98,7 +102,12 @@ def run_pipeline(
             if status_led is not None:
                 status_led.solid_thinking()
 
-            result = stt_engine.transcribe(audio_path, language=language)
+            active_language = (
+                language_switch.current_language
+                if language_switch is not None
+                else language
+            )
+            result = stt_engine.transcribe(audio_path, language=active_language)
             if result is None:
                 continue
 
@@ -106,6 +115,13 @@ def run_pipeline(
 
             if not result.has_speech:
                 continue
+
+            # If the switch was flipped during transcription, honor the latest switch language
+            response_language = (
+                language_switch.current_language
+                if language_switch is not None
+                else result.language
+            )
 
             spoken_text = result.text
             llm_reply: Optional[str] = None
@@ -118,7 +134,7 @@ def run_pipeline(
             if llm_engine is not None:
                 llm_reply = llm_engine.generate(
                     result.text,
-                    language=result.language,
+                    language=response_language,
                     history=context_history,
                 )
                 if not llm_reply:
@@ -141,12 +157,19 @@ def run_pipeline(
                 )
 
             if tts_engine:
-                tts_engine.speak(spoken_text, lang_code=result.language)
+                final_speak_lang = (
+                    language_switch.current_language
+                    if language_switch is not None
+                    else response_language
+                )
+                tts_engine.speak(spoken_text, lang_code=final_speak_lang)
             elif status_led is not None:
                 status_led.off()
     except KeyboardInterrupt:
         pass
     finally:
+        if language_switch is not None:
+            language_switch.close()
         recorder.close()
         if status_led is not None:
             status_led.close()
@@ -180,6 +203,23 @@ def main() -> None:
         "--no-led",
         action="store_true",
         help="Disable the GPIO status LED.",
+    )
+    parser.add_argument(
+        "--lang-pin-1",
+        type=int,
+        default=DEFAULT_LANG_SWITCH_PIN_1,
+        help=f"BCM GPIO pin for language switch State I -> French (default: {DEFAULT_LANG_SWITCH_PIN_1}, physical pin 3).",
+    )
+    parser.add_argument(
+        "--lang-pin-2",
+        type=int,
+        default=DEFAULT_LANG_SWITCH_PIN_2,
+        help=f"BCM GPIO pin for language switch State II -> Chinese (default: {DEFAULT_LANG_SWITCH_PIN_2}, physical pin 5; both HIGH -> English).",
+    )
+    parser.add_argument(
+        "--no-lang-switch",
+        action="store_true",
+        help="Disable the physical GPIO language selector switch.",
     )
     parser.add_argument(
         "--keyboard",
@@ -362,6 +402,7 @@ def main() -> None:
 
     status_led: Optional[StatusLED] = None
     recorder: Optional[RecorderEngine] = None
+    language_switch: Optional[LanguageSwitch] = None
 
     def _handle_termination(signum: int, _frame: object) -> None:
         raise KeyboardInterrupt
@@ -371,6 +412,19 @@ def main() -> None:
 
     try:
         status_led = StatusLED(gpio_pin=None if args.no_led else args.led_pin)
+
+        if not args.no_lang_switch and args.language is None:
+            language_switch = LanguageSwitch(
+                pin_1=args.lang_pin_1,
+                pin_2=args.lang_pin_2,
+            )
+            print(
+                f"Language switch      : GPIO {args.lang_pin_1} (I=fr), "
+                f"GPIO {args.lang_pin_2} (II=zh), both HIGH=en "
+                f"[current: {language_switch.describe_state()}]"
+            )
+        elif args.no_lang_switch:
+            print("Language switch      : disabled")
 
         if args.keyboard:
             recorder = HoldKeyAlsaRecorder(device=mic_device, status_led=status_led)
@@ -398,8 +452,15 @@ def main() -> None:
                 voice_map=custom_voice_map,
                 status_led=status_led,
             )
-            piper_tts.preload_voices(forced_language=args.language)
+            # When language switch is enabled, preload all switchable voices (en, fr, zh)
+            piper_tts.preload_voices(
+                forced_language=None if language_switch is not None else args.language
+            )
             tts_engine = piper_tts
+
+        if language_switch is not None:
+            language_switch.tts_engine = tts_engine
+            language_switch.start_monitoring()
 
         run_pipeline(
             recorder=recorder,
@@ -409,10 +470,13 @@ def main() -> None:
             session_logger=session_logger,
             status_led=status_led,
             language=args.language,
+            language_switch=language_switch,
         )
     except KeyboardInterrupt:
         print("\nInterrupted. Cleaning up GPIO...")
     finally:
+        if language_switch is not None:
+            language_switch.close()
         if recorder is not None:
             recorder.close()
         if status_led is not None:

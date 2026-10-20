@@ -28,6 +28,7 @@ class StatusLED:
         self.fade_in_time = fade_in_time
         self.fade_out_time = fade_out_time
         self._led = None
+        self._state = "off"
 
         if gpio_pin is not None:
             from gpiozero import PWMLED
@@ -35,8 +36,14 @@ class StatusLED:
             self._led = PWMLED(gpio_pin, active_high=True, initial_value=0.0)
             atexit.register(self.close)
 
+    @property
+    def state(self) -> str:
+        """Current logical LED state ('off', 'ready', or 'thinking')."""
+        return self._state
+
     def pulse_ready(self) -> None:
         """Pulse the LED smoothly to indicate the device is ready for input."""
+        self._state = "ready"
         if self._led is not None:
             self._led.pulse(
                 fade_in_time=self.fade_in_time,
@@ -46,11 +53,13 @@ class StatusLED:
 
     def off(self) -> None:
         """Turn the LED completely off (e.g., while the switch/button is pressed)."""
+        self._state = "off"
         if self._led is not None:
             self._led.off()
 
     def solid_thinking(self) -> None:
         """Turn the LED solid on while thinking/processing before speaker playback."""
+        self._state = "thinking"
         if self._led is not None:
             self._led.on()
 

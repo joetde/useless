@@ -1,5 +1,6 @@
 import os
 import random
+import threading
 import wave
 import subprocess
 from abc import ABC, abstractmethod
@@ -31,8 +32,18 @@ class TTSEngine(ABC):
     """Abstract base class for Text-to-Speech engines."""
 
     @abstractmethod
-    def speak(self, text: str, lang_code: str = "en") -> None:
+    def speak(
+        self,
+        text: str,
+        lang_code: str = "en",
+        output_wav: str = TTS_OUTPUT_FILENAME,
+        restore_led_ready: bool = False,
+    ) -> None:
         """Synthesize text to speech and play it out loud."""
+        pass
+
+    def interrupt_playback(self) -> None:
+        """Interrupt any currently playing audio."""
         pass
 
 
@@ -64,6 +75,8 @@ class PiperTTSEngine(TTSEngine):
         self.default_voice = default_voice
         self.status_led = status_led
         self.loaded_voices: Dict[str, PiperVoice] = {}
+        self._lock = threading.Lock()
+        self._playback_proc: Optional[subprocess.Popen] = None
 
     def get_voice_name(self, lang_code: str) -> str:
         """Return the configured Piper voice model name for a language code."""
@@ -180,26 +193,47 @@ class PiperTTSEngine(TTSEngine):
 
         return output_wav
 
+    def interrupt_playback(self) -> None:
+        """Stop any currently playing `aplay` process immediately."""
+        proc = self._playback_proc
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=0.5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
     def speak(
         self,
         text: str,
         lang_code: str = "en",
         output_wav: str = TTS_OUTPUT_FILENAME,
+        restore_led_ready: bool = False,
     ) -> None:
         """Synthesize text to speech and play it through the configured speaker."""
-        wav_path = self.synthesize_to_file(text, lang_code=lang_code, output_wav=output_wav)
-        if not wav_path:
+        with self._lock:
+            was_ready = self.status_led is not None and self.status_led.state == "ready"
+            wav_path = self.synthesize_to_file(text, lang_code=lang_code, output_wav=output_wav)
+            if not wav_path:
+                if self.status_led is not None and not (restore_led_ready or was_ready):
+                    self.status_led.off()
+                return
+
+            effect_label = getattr(self, "_last_applied_effect", "none")
+            voice_name = self.get_voice_name(lang_code)
+            fx_info = f", effect: {effect_label}" if effect_label != "none" else ""
+            print(f"Speaking back ({get_language_name(lang_code)} [{voice_name}{fx_info}])...")
             if self.status_led is not None:
                 self.status_led.off()
-            return
-
-        effect_label = getattr(self, "_last_applied_effect", "none")
-        voice_name = self.get_voice_name(lang_code)
-        fx_info = f", effect: {effect_label}" if effect_label != "none" else ""
-        print(f"Speaking back ({get_language_name(lang_code)} [{voice_name}{fx_info}])...")
-        if self.status_led is not None:
-            self.status_led.off()
-        subprocess.run(
-            ["aplay", "-q", "-D", self.speaker_device, wav_path],
-            check=False,
-        )
+            try:
+                self._playback_proc = subprocess.Popen(
+                    ["aplay", "-q", "-D", self.speaker_device, wav_path]
+                )
+                self._playback_proc.wait()
+            finally:
+                self._playback_proc = None
+                if self.status_led is not None and (restore_led_ready or was_ready):
+                    self.status_led.pulse_ready()
