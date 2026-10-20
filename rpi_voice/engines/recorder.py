@@ -1,31 +1,83 @@
-import os
-import sys
-import time
-import signal
-import select
-import termios
-import tty
-import subprocess
 import atexit
+import os
+import select
+import signal
+import subprocess
+import sys
+import termios
+import time
+import tty
 from abc import ABC, abstractmethod
-from typing import Optional, TYPE_CHECKING
+from contextlib import contextmanager
+from typing import Iterator, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .led import StatusLED
 
 from .config import (
-    WAVE_OUTPUT_FILENAME,
+    DEFAULT_GPIO_BOUNCE_TIME,
+    DEFAULT_GPIO_PIN,
     RATE,
+    RELEASE_TIMEOUT,
     TRIGGER_KEY,
     TRIGGER_KEY_NAME,
-    RELEASE_TIMEOUT,
-    DEFAULT_GPIO_PIN,
-    DEFAULT_GPIO_BOUNCE_TIME,
+    WAVE_OUTPUT_FILENAME,
 )
+from .led import release_gpio_device
+
+
+@contextmanager
+def _cbreak_terminal(require_tty: bool = False) -> Iterator[bool]:
+    """Put stdin into cbreak mode if attached to a TTY, restoring settings on exit."""
+    if not sys.stdin.isatty():
+        if require_tty:
+            raise RuntimeError("Keyboard recording requires an interactive TTY on stdin.")
+        yield False
+        return
+
+    fd: Optional[int] = None
+    old_settings = None
+    try:
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+        yield True
+    except (termios.error, ValueError, OSError):
+        if require_tty:
+            raise
+        yield False
+    finally:
+        if fd is not None and old_settings is not None:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def _read_available_keys(timeout: float = 0.0) -> str:
+    """Read all currently buffered characters from stdin up to `timeout`."""
+    rlist, _, _ = select.select([sys.stdin], [], [], timeout)
+    if not rlist:
+        return ""
+    chars = sys.stdin.read(1)
+    while select.select([sys.stdin], [], [], 0)[0]:
+        chars += sys.stdin.read(1)
+    return chars
+
+
+def _is_quit_key(chars: str) -> bool:
+    return any(k in chars for k in ("q", "Q", "\x03"))
 
 
 class RecorderEngine(ABC):
     """Abstract base class for audio recording engines."""
+
+    def __init__(
+        self,
+        device: str,
+        rate: int = RATE,
+        status_led: Optional["StatusLED"] = None,
+    ):
+        self.device = device
+        self.rate = rate
+        self.status_led = status_led
 
     @abstractmethod
     def record(self, output_file: str = WAVE_OUTPUT_FILENAME) -> Optional[str]:
@@ -33,14 +85,44 @@ class RecorderEngine(ABC):
         Wait for trigger / record audio to `output_file`.
         Returns:
             - Path to recorded audio file (`str`) if a valid recording was captured,
-            - `""` (empty string) if recording attempt failed/was too short but session should continue,
+            - `""` (empty string) if recording attempt failed/was too short,
             - `None` if the user requested to quit.
         """
-        pass
 
     def close(self) -> None:
         """Release any hardware resources held by the recorder."""
-        pass
+
+    def _start_arecord(self, output_file: str) -> subprocess.Popen:
+        if os.path.exists(output_file):
+            os.remove(output_file)
+        cmd = [
+            "arecord",
+            "-D", self.device,
+            "-f", "S16_LE",
+            "-r", str(self.rate),
+            "-c", "1",
+            output_file,
+        ]
+        return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    @staticmethod
+    def _stop_arecord(process: subprocess.Popen) -> None:
+        """Stop `arecord` cleanly via SIGINT so ALSA flushes PCM frames and updates the WAV header."""
+        if process.poll() is None:
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+    @staticmethod
+    def _validate_recording(output_file: str) -> str:
+        if not os.path.exists(output_file) or os.path.getsize(output_file) <= 44:
+            print("Warning: Recording failed or was too short.")
+            return ""
+        print(f"* Audio saved to {output_file} ({os.path.getsize(output_file):,} bytes)")
+        return output_file
 
 
 class GPIOSwitchAlsaRecorder(RecorderEngine):
@@ -58,149 +140,61 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
         bounce_time: float = DEFAULT_GPIO_BOUNCE_TIME,
         status_led: Optional["StatusLED"] = None,
     ):
+        super().__init__(device=device, rate=rate, status_led=status_led)
         from gpiozero import Button
 
-        self.device = device
         self.gpio_pin = gpio_pin
-        self.rate = rate
         self.bounce_time = bounce_time
-        self.status_led = status_led
         self.button = Button(gpio_pin, pull_up=True, bounce_time=bounce_time)
         atexit.register(self.close)
 
     def close(self) -> None:
-        if getattr(self, "button", None) is not None:
-            pin_obj = getattr(self.button, "pin", None)
-            factory = getattr(pin_obj, "factory", None)
-            chip_handle = getattr(factory, "_handle", None)
-            pin_info = getattr(pin_obj, "info", None)
-            pin_num = getattr(pin_obj, "_number", self.gpio_pin)
-            try:
-                self.button.close()
-            except Exception:
-                pass
-            if factory is not None and pin_info is not None:
-                getattr(factory, "pins", {}).pop(pin_info, None)
-            if chip_handle is not None and pin_num is not None:
-                try:
-                    import lgpio
-
-                    lgpio.gpio_free(chip_handle, pin_num)
-                    lgpio.gpio_claim_input(chip_handle, pin_num, lgpio.SET_PULL_DOWN)
-                    lgpio.gpio_free(chip_handle, pin_num)
-                except Exception:
-                    pass
+        if self.button is not None:
+            release_gpio_device(self.button, self.gpio_pin, pull_down=True)
             self.button = None
 
-    def _check_quit_key(self, use_stdin: bool) -> bool:
-        """Non-blocking check if 'q' or Ctrl+C was pressed on stdin."""
-        if not use_stdin:
-            return False
-        rlist, _, _ = select.select([sys.stdin], [], [], 0)
-        if rlist:
-            chars = ""
-            while select.select([sys.stdin], [], [], 0)[0]:
-                chars += sys.stdin.read(1)
-            if "\x03" in chars or "q" in chars or "Q" in chars:
-                return True
-        return False
-
     def record(self, output_file: str = WAVE_OUTPUT_FILENAME) -> Optional[str]:
-        use_stdin = sys.stdin.isatty()
-        fd = None
-        old_settings = None
+        with _cbreak_terminal(require_tty=False) as has_tty:
+            suffix = ", or press 'q' to quit..." if has_tty else "..."
+            print(f"\n[Ready] Close switch on GPIO {self.gpio_pin} to record (open to stop){suffix}")
 
-        if use_stdin:
-            try:
-                fd = sys.stdin.fileno()
-                old_settings = termios.tcgetattr(fd)
-            except (termios.error, ValueError, OSError):
-                use_stdin = False
+            if self.status_led is not None:
+                self.status_led.pulse_ready()
 
-        print(
-            f"\n[Ready] Close switch on GPIO {self.gpio_pin} to record (open to stop)"
-            + (", or press 'q' to quit..." if use_stdin else "...")
-        )
-
-        if self.status_led is not None:
-            self.status_led.pulse_ready()
-
-        try:
-            if use_stdin and fd is not None:
-                tty.setcbreak(fd)
-
-            # Wait for switch to be closed (is_pressed is True when connected to GND)
             while not self.button.is_pressed:
-                if self._check_quit_key(use_stdin):
+                if has_tty and _is_quit_key(_read_available_keys(0.0)):
                     if self.status_led is not None:
                         self.status_led.off()
                     return None
                 time.sleep(0.02)
 
-            # Switch is pressed: turn LED off while recording
             if self.status_led is not None:
                 self.status_led.off()
 
-            # Remove previous file so we can verify fresh recording
-            if os.path.exists(output_file):
-                os.remove(output_file)
+            process = self._start_arecord(output_file)
+            start_time = time.monotonic()
 
-            cmd = [
-                "arecord",
-                "-D", self.device,
-                "-f", "S16_LE",
-                "-r", str(self.rate),
-                "-c", "1",
-                output_file,
-            ]
-            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            try:
+                while self.button.is_pressed and process.poll() is None:
+                    elapsed = time.monotonic() - start_time
+                    print(
+                        f"\r  * [RECORDING] {elapsed:4.1f}s (Keep switch on GPIO {self.gpio_pin} closed...) ",
+                        end="",
+                        flush=True,
+                    )
+                    if has_tty and _is_quit_key(_read_available_keys(0.0)):
+                        self._stop_arecord(process)
+                        return None
+                    time.sleep(0.03)
+            finally:
+                if self.status_led is not None:
+                    self.status_led.solid_thinking()
+                self._stop_arecord(process)
 
-            start_time = time.time()
-
-            while self.button.is_pressed:
-                elapsed = time.time() - start_time
-                print(
-                    f"\r  * [RECORDING] {elapsed:4.1f}s (Keep switch on GPIO {self.gpio_pin} closed...) ",
-                    end="",
-                    flush=True,
-                )
-
-                # Check if arecord exited prematurely (e.g. device error)
-                if process.poll() is not None:
-                    break
-
-                if self._check_quit_key(use_stdin):
-                    process.send_signal(signal.SIGINT)
-                    process.wait()
-                    return None
-
-                time.sleep(0.03)
-
-            # Switch released: turn LED solid while stopping & processing
-            if self.status_led is not None:
-                self.status_led.solid_thinking()
-
-            # Stop recording cleanly via SIGINT so ALSA flushes remaining PCM frames and updates WAV header
-            if process.poll() is None:
-                process.send_signal(signal.SIGINT)
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-
-            total_time = time.time() - start_time
+            total_time = time.monotonic() - start_time
             print(f"\r  * [RECORDING] Stopped ({total_time:.1f}s). Processing audio...          ")
 
-        finally:
-            if use_stdin and fd is not None and old_settings is not None:
-                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-
-        if not os.path.exists(output_file) or os.path.getsize(output_file) <= 44:
-            print("Warning: Recording failed or was too short.")
-            return ""
-
-        print(f"* Audio saved to {output_file} ({os.path.getsize(output_file):,} bytes)")
-        return output_file
+        return self._validate_recording(output_file)
 
 
 class HoldKeyAlsaRecorder(RecorderEngine):
@@ -218,108 +212,59 @@ class HoldKeyAlsaRecorder(RecorderEngine):
         release_timeout: float = RELEASE_TIMEOUT,
         status_led: Optional["StatusLED"] = None,
     ):
-        self.device = device
-        self.rate = rate
+        super().__init__(device=device, rate=rate, status_led=status_led)
         self.trigger_key = trigger_key
         self.trigger_key_name = trigger_key_name
         self.release_timeout = release_timeout
-        self.status_led = status_led
 
     def record(self, output_file: str = WAVE_OUTPUT_FILENAME) -> Optional[str]:
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
+        with _cbreak_terminal(require_tty=True):
+            print(
+                f"\n[Ready] Hold [{self.trigger_key_name}] to record (release to stop), or press 'q' to quit..."
+            )
 
-        print(f"\n[Ready] Hold [{self.trigger_key_name}] to record (release to stop), or press 'q' to quit...")
+            if self.status_led is not None:
+                self.status_led.pulse_ready()
 
-        if self.status_led is not None:
-            self.status_led.pulse_ready()
-
-        try:
-            tty.setcbreak(fd)
-
-            # Wait for trigger key press
             while True:
-                rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
-                if rlist:
-                    ch = sys.stdin.read(1)
-                    if ch in ("q", "Q", "\x03"):  # 'q' or Ctrl+C
-                        if self.status_led is not None:
-                            self.status_led.off()
-                        return None
-                    if ch == self.trigger_key:
-                        break
+                chars = _read_available_keys(0.1)
+                if _is_quit_key(chars):
+                    if self.status_led is not None:
+                        self.status_led.off()
+                    return None
+                if self.trigger_key in chars:
+                    break
 
-            # Key pressed: turn LED off while recording
             if self.status_led is not None:
                 self.status_led.off()
 
-            # Remove previous file so we can verify fresh recording
-            if os.path.exists(output_file):
-                os.remove(output_file)
-
-            cmd = [
-                "arecord",
-                "-D", self.device,
-                "-f", "S16_LE",
-                "-r", str(self.rate),
-                "-c", "1",
-                output_file,
-            ]
-            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-
-            start_time = time.time()
+            process = self._start_arecord(output_file)
+            start_time = time.monotonic()
             last_event_time = start_time
 
-            while True:
-                elapsed = time.time() - start_time
-                print(
-                    f"\r  * [RECORDING] {elapsed:4.1f}s (Keep holding [{self.trigger_key_name}]...) ",
-                    end="",
-                    flush=True,
-                )
-
-                # Check if arecord exited prematurely (e.g. device error)
-                if process.poll() is not None:
-                    break
-
-                rlist, _, _ = select.select([sys.stdin], [], [], 0.05)
-                if rlist:
-                    # Drain all buffered key repeats
-                    chars = ""
-                    while select.select([sys.stdin], [], [], 0)[0]:
-                        chars += sys.stdin.read(1)
-                    if "\x03" in chars or "q" in chars or "Q" in chars:
-                        process.send_signal(signal.SIGINT)
-                        process.wait()
-                        return None
-                    if self.trigger_key in chars:
-                        last_event_time = time.time()
-                else:
-                    # No key repeat received within timeout -> key was released
-                    if time.time() - last_event_time > self.release_timeout:
+            try:
+                while process.poll() is None:
+                    elapsed = time.monotonic() - start_time
+                    print(
+                        f"\r  * [RECORDING] {elapsed:4.1f}s (Keep holding [{self.trigger_key_name}]...) ",
+                        end="",
+                        flush=True,
+                    )
+                    chars = _read_available_keys(0.05)
+                    if chars:
+                        if _is_quit_key(chars):
+                            self._stop_arecord(process)
+                            return None
+                        if self.trigger_key in chars:
+                            last_event_time = time.monotonic()
+                    elif (time.monotonic() - last_event_time) > self.release_timeout:
                         break
+            finally:
+                if self.status_led is not None:
+                    self.status_led.solid_thinking()
+                self._stop_arecord(process)
 
-            # Key released: turn LED solid while stopping & processing
-            if self.status_led is not None:
-                self.status_led.solid_thinking()
-
-            # Stop recording cleanly via SIGINT so ALSA flushes remaining PCM frames and updates WAV header
-            if process.poll() is None:
-                process.send_signal(signal.SIGINT)
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-
-            total_time = time.time() - start_time
+            total_time = time.monotonic() - start_time
             print(f"\r  * [RECORDING] Stopped ({total_time:.1f}s). Processing audio...          ")
 
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-
-        if not os.path.exists(output_file) or os.path.getsize(output_file) <= 44:
-            print("Warning: Recording failed or was too short.")
-            return ""
-
-        print(f"* Audio saved to {output_file} ({os.path.getsize(output_file):,} bytes)")
-        return output_file
+        return self._validate_recording(output_file)

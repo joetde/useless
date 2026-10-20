@@ -45,6 +45,7 @@ class SessionLogger:
         self.transcript_file = self.session_dir / "transcript.md"
 
         self.turn_count = 0
+        self._closed = False
         self._active_context: List[ChatTurn] = []
         self._last_interaction_monotonic: Optional[float] = None
         self.metadata: Dict[str, Any] = {
@@ -54,9 +55,8 @@ class SessionLogger:
             "turn_count": 0,
             "max_context_turns": self.max_context_turns,
             "context_idle_timeout_sec": self.context_idle_timeout,
+            **(session_metadata or {}),
         }
-        if session_metadata:
-            self.metadata.update(session_metadata)
 
         if self.enabled:
             self._init_files()
@@ -77,18 +77,19 @@ class SessionLogger:
             header_lines.append(f"- **LLM**: {llm_info}")
         if "stt_model" in self.metadata:
             header_lines.append(f"- **STT Model**: {self.metadata['stt_model']}")
-        if "voice_effect" in self.metadata and self.metadata["voice_effect"]:
+        if self.metadata.get("voice_effect"):
             header_lines.append(f"- **Voice Effect**: {self.metadata['voice_effect']}")
         header_lines.extend(["", "---", ""])
 
-        with open(self.transcript_file, "w", encoding="utf-8") as f:
-            f.write("\n".join(header_lines))
+        self.transcript_file.write_text("\n".join(header_lines), encoding="utf-8")
 
     def _write_metadata(self) -> None:
         if not self.enabled:
             return
-        with open(self.metadata_file, "w", encoding="utf-8") as f:
-            json.dump(self.metadata, f, indent=2, ensure_ascii=False)
+        self.metadata_file.write_text(
+            json.dumps(self.metadata, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
     def get_context_for_next_turn(self) -> List[ChatTurn]:
         """
@@ -133,9 +134,7 @@ class SessionLogger:
         llm_provider: Optional[str] = None,
         llm_model: Optional[str] = None,
     ) -> None:
-        """
-        Record a completed user/LLM turn in the rolling context window and write to audit files.
-        """
+        """Record a completed user/LLM turn in the rolling context window and write to audit files."""
         now = datetime.now().astimezone()
         now_iso = now.isoformat(timespec="seconds")
         now_time_str = now.strftime("%H:%M:%S")
@@ -145,7 +144,6 @@ class SessionLogger:
         user_text = transcription.text.strip()
         assistant_text = (llm_response or "").strip()
 
-        # Update rolling context if we got both user speech and an assistant reply
         if user_text and assistant_text and self.max_context_turns > 0:
             self._active_context.append(
                 ChatTurn(
@@ -197,22 +195,25 @@ class SessionLogger:
         md_lines = [
             f"### Turn {self.turn_count} — {now_time_str} [{lang_badge}{ctx_badge}]",
             "",
-            f"**Child (Voice Transcript):**",
+            "**Child (Voice Transcript):**",
             f"> {user_text or '(No speech detected)'}",
             "",
         ]
         if transcription.segments:
-            seg_lines = [
-                f"- `[{seg.start:5.2f}s -> {seg.end:5.2f}s]` {seg.text}"
-                for seg in transcription.segments
-            ]
-            md_lines.extend(["<details><summary>Timestamped Segments</summary>", ""])
-            md_lines.extend(seg_lines)
-            md_lines.extend(["", "</details>", ""])
+            md_lines.extend(
+                [
+                    "<details><summary>Timestamped Segments</summary>",
+                    "",
+                    *[f"- `[{seg.start:5.2f}s -> {seg.end:5.2f}s]` {seg.text}" for seg in transcription.segments],
+                    "",
+                    "</details>",
+                    "",
+                ]
+            )
 
         md_lines.extend(
             [
-                f"**Assistant (LLM Response):**",
+                "**Assistant (LLM Response):**",
                 f"> {assistant_text if llm_response is not None else '(LLM disabled / no response)'}",
                 "",
                 "---",
@@ -229,9 +230,9 @@ class SessionLogger:
 
     def close(self) -> None:
         """Finalize session metadata when the session ends."""
-        if not self.enabled:
+        if not self.enabled or self._closed:
             return
-        ended_at = datetime.now().astimezone()
-        self.metadata["ended_at"] = ended_at.isoformat(timespec="seconds")
+        self._closed = True
+        self.metadata["ended_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
         self.metadata["turn_count"] = self.turn_count
         self._write_metadata()

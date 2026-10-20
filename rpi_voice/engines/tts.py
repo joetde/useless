@@ -1,8 +1,8 @@
 import os
 import random
+import subprocess
 import threading
 import wave
-import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, Iterable, Optional, TYPE_CHECKING, Union
@@ -13,17 +13,17 @@ if TYPE_CHECKING:
     from .led import StatusLED
 
 from .config import (
-    TTS_OUTPUT_FILENAME,
-    VOICES_DIR,
-    DEFAULT_SPEECH_SPEED,
     DEFAULT_NOISE_SCALE,
     DEFAULT_NOISE_W_SCALE,
-    DEFAULT_PRELOAD_LANGUAGES,
-    DEFAULT_VOICE_EFFECT,
-    VOICE_EFFECTS,
-    PIPER_VOICE_MAP,
-    PIPER_SPEAKER_MAP,
     DEFAULT_PIPER_VOICE,
+    DEFAULT_PRELOAD_LANGUAGES,
+    DEFAULT_SPEECH_SPEED,
+    DEFAULT_VOICE_EFFECT,
+    PIPER_SPEAKER_MAP,
+    PIPER_VOICE_MAP,
+    TTS_OUTPUT_FILENAME,
+    VOICE_EFFECTS,
+    VOICES_DIR,
     get_language_name,
 )
 
@@ -40,11 +40,9 @@ class TTSEngine(ABC):
         restore_led_ready: bool = False,
     ) -> None:
         """Synthesize text to speech and play it out loud."""
-        pass
 
     def interrupt_playback(self) -> None:
         """Interrupt any currently playing audio."""
-        pass
 
 
 class PiperTTSEngine(TTSEngine):
@@ -70,13 +68,14 @@ class PiperTTSEngine(TTSEngine):
         self.noise_scale = noise_scale
         self.noise_w_scale = noise_w_scale
         self.voice_effect = voice_effect
-        self.voice_map = dict(voice_map) if voice_map is not None else dict(PIPER_VOICE_MAP)
-        self.speaker_map = dict(speaker_map) if speaker_map is not None else dict(PIPER_SPEAKER_MAP)
+        self.voice_map = dict(voice_map or PIPER_VOICE_MAP)
+        self.speaker_map = dict(speaker_map or PIPER_SPEAKER_MAP)
         self.default_voice = default_voice
         self.status_led = status_led
         self.loaded_voices: Dict[str, PiperVoice] = {}
         self._lock = threading.Lock()
         self._playback_proc: Optional[subprocess.Popen] = None
+        self._last_applied_effect: str = "none"
 
     def get_voice_name(self, lang_code: str) -> str:
         """Return the configured Piper voice model name for a language code."""
@@ -130,7 +129,7 @@ class PiperTTSEngine(TTSEngine):
         if not self.voice_effect or self.voice_effect == "none":
             return "none"
         if self.voice_effect == "random":
-            choices = [k for k in VOICE_EFFECTS.keys() if k != "none"]
+            choices = [k for k in VOICE_EFFECTS if k != "none"]
             return random.choice(choices)
         return self.voice_effect if self.voice_effect in VOICE_EFFECTS else "none"
 
@@ -142,22 +141,25 @@ class PiperTTSEngine(TTSEngine):
 
         audio_filter = filter_template.format(sr=sample_rate)
         temp_out = f"{wav_path}.fx.wav"
-        res = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-loglevel",
-                "error",
-                "-i",
-                wav_path,
-                "-af",
-                audio_filter,
-                temp_out,
-            ],
-            check=False,
-        )
-        if res.returncode == 0 and os.path.exists(temp_out):
-            os.replace(temp_out, wav_path)
+        try:
+            res = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-i", wav_path,
+                    "-af", audio_filter,
+                    temp_out,
+                ],
+                check=False,
+                timeout=10,
+            )
+            if res.returncode == 0 and os.path.exists(temp_out):
+                os.replace(temp_out, wav_path)
+        finally:
+            if os.path.exists(temp_out):
+                try:
+                    os.remove(temp_out)
+                except OSError:
+                    pass
 
     def synthesize_to_file(
         self,
@@ -172,9 +174,7 @@ class PiperTTSEngine(TTSEngine):
 
         voice_name = self.get_voice_name(lang_code)
         voice = self.get_voice(lang_code)
-        speaker_id = self.speaker_map.get(voice_name)
-        if voice.config.num_speakers <= 1:
-            speaker_id = None
+        speaker_id = self.speaker_map.get(voice_name) if voice.config.num_speakers > 1 else None
 
         syn_config = SynthesisConfig(
             speaker_id=speaker_id,
@@ -200,11 +200,13 @@ class PiperTTSEngine(TTSEngine):
             try:
                 proc.terminate()
                 proc.wait(timeout=0.5)
-            except Exception:
+            except subprocess.TimeoutExpired:
                 try:
                     proc.kill()
-                except Exception:
+                except OSError:
                     pass
+            except OSError:
+                pass
 
     def speak(
         self,
@@ -222,9 +224,8 @@ class PiperTTSEngine(TTSEngine):
                     self.status_led.off()
                 return
 
-            effect_label = getattr(self, "_last_applied_effect", "none")
             voice_name = self.get_voice_name(lang_code)
-            fx_info = f", effect: {effect_label}" if effect_label != "none" else ""
+            fx_info = f", effect: {self._last_applied_effect}" if self._last_applied_effect != "none" else ""
             print(f"Speaking back ({get_language_name(lang_code)} [{voice_name}{fx_info}])...")
             if self.status_led is not None:
                 self.status_led.off()

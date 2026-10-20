@@ -27,8 +27,8 @@ from engines import (
     PiperTTSEngine,
     RecorderEngine,
     SESSIONS_DIR,
-    SessionLogger,
     STTEngine,
+    SessionLogger,
     StatusLED,
     TTSEngine,
     TranscriptionResult,
@@ -45,8 +45,8 @@ def print_transcription_result(result: TranscriptionResult) -> None:
     print("\n" + "=" * 48)
     print(" RESULTS")
     print("=" * 48)
+    lang_full = get_language_name(result.language)
     if result.forced_language:
-        lang_full = get_language_name(result.language)
         print(f"Forced Language   : {lang_full} ({result.language})")
     elif result.top_languages:
         print("Top Language Matches:")
@@ -55,19 +55,16 @@ def print_transcription_result(result: TranscriptionResult) -> None:
             marker = " (used for transcription)" if rank == 1 else ""
             print(f"  {rank}. {name:<12} ({code}) - {prob * 100:5.1f}%{marker}")
     else:
-        lang_full = get_language_name(result.language)
-        lang_prob = result.language_probability * 100
-        print(f"Detected Language : {lang_full} ({result.language}) - {lang_prob:.1f}% confidence")
+        print(f"Detected Language : {lang_full} ({result.language}) - {result.language_probability * 100:.1f}% confidence")
     print("-" * 48)
 
     if not result.segments:
         print("Transcription     : (No speech detected / silence)")
-        print("=" * 48)
     else:
         print("Transcription:")
         for seg in result.segments:
             print(f"  [{seg.start:5.2f}s -> {seg.end:5.2f}s] {seg.text}")
-        print("=" * 48)
+    print("=" * 48)
 
 
 def print_llm_response(response_text: str) -> None:
@@ -88,122 +85,94 @@ def run_pipeline(
     language_switch: Optional[LanguageSwitch] = None,
 ) -> None:
     """Run the interactive record -> transcribe -> LLM -> speak loop."""
-    try:
-        while True:
-            audio_path = recorder.record()
-            if audio_path is None:
-                # User requested to quit
-                break
-            if not audio_path:
-                # Recording attempt failed or was too short; continue loop
-                continue
+    while True:
+        audio_path = recorder.record()
+        if audio_path is None:
+            break
+        if not audio_path:
+            continue
 
-            # Ensure LED is solid while thinking (STT, LLM, TTS synthesis)
-            if status_led is not None:
-                status_led.solid_thinking()
-
-            active_language = (
-                language_switch.current_language
-                if language_switch is not None
-                else language
-            )
-            result = stt_engine.transcribe(audio_path, language=active_language)
-            if result is None:
-                continue
-
-            print_transcription_result(result)
-
-            if not result.has_speech:
-                continue
-
-            # If the switch was flipped during transcription, honor the latest switch language
-            response_language = (
-                language_switch.current_language
-                if language_switch is not None
-                else result.language
-            )
-
-            spoken_text = result.text
-            llm_reply: Optional[str] = None
-            context_history = (
-                session_logger.get_context_for_next_turn()
-                if session_logger is not None
-                else []
-            )
-
-            if llm_engine is not None:
-                llm_reply = llm_engine.generate(
-                    result.text,
-                    language=response_language,
-                    history=context_history,
-                )
-                if not llm_reply:
-                    print("Warning: No response received from LLM.")
-                    if session_logger is not None:
-                        session_logger.log_turn(
-                            transcription=result,
-                            llm_response=None,
-                            context_turns_used=len(context_history),
-                        )
-                    continue
-                print_llm_response(llm_reply)
-                spoken_text = llm_reply
-
-            if session_logger is not None:
-                session_logger.log_turn(
-                    transcription=result,
-                    llm_response=llm_reply,
-                    context_turns_used=len(context_history),
-                )
-
-            if tts_engine:
-                final_speak_lang = (
-                    language_switch.current_language
-                    if language_switch is not None
-                    else response_language
-                )
-                tts_engine.speak(spoken_text, lang_code=final_speak_lang)
-            elif status_led is not None:
-                status_led.off()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        if language_switch is not None:
-            language_switch.close()
-        recorder.close()
         if status_led is not None:
-            status_led.close()
+            status_led.solid_thinking()
+
+        active_language = (
+            language_switch.current_language if language_switch is not None else language
+        )
+        result = stt_engine.transcribe(audio_path, language=active_language)
+        if result is None:
+            continue
+
+        print_transcription_result(result)
+        if not result.has_speech:
+            continue
+
+        response_language = (
+            language_switch.current_language if language_switch is not None else result.language
+        )
+        spoken_text = result.text
+        llm_reply: Optional[str] = None
+        context_history = (
+            session_logger.get_context_for_next_turn() if session_logger is not None else []
+        )
+
+        if llm_engine is not None:
+            llm_reply = llm_engine.generate(
+                result.text,
+                language=response_language,
+                history=context_history,
+            )
+            if not llm_reply:
+                print("Warning: No response received from LLM.")
+                if session_logger is not None:
+                    session_logger.log_turn(
+                        transcription=result,
+                        llm_response=None,
+                        context_turns_used=len(context_history),
+                    )
+                continue
+            print_llm_response(llm_reply)
+            spoken_text = llm_reply
+
         if session_logger is not None:
-            session_logger.close()
-    print("\nExiting.")
+            session_logger.log_turn(
+                transcription=result,
+                llm_response=llm_reply,
+                context_turns_used=len(context_history),
+            )
+
+        if tts_engine is not None:
+            final_speak_lang = (
+                language_switch.current_language
+                if language_switch is not None
+                else response_language
+            )
+            tts_engine.speak(spoken_text, lang_code=final_speak_lang)
+        elif status_led is not None:
+            status_led.off()
 
 
-def main() -> None:
-    effect_choices = list(VOICE_EFFECTS.keys()) + ["random"]
-    zh_voice_choices = AVAILABLE_PIPER_VOICES["zh"]
-    llm_provider_choices = list(DEFAULT_LLM_MODELS.keys())
-    default_allowed_str = ",".join(DEFAULT_ALLOWED_LANGUAGES) if DEFAULT_ALLOWED_LANGUAGES else "all"
+def parse_args() -> argparse.Namespace:
+    effect_choices = [*VOICE_EFFECTS.keys(), "random"]
+    default_allowed_str = (
+        ",".join(DEFAULT_ALLOWED_LANGUAGES) if DEFAULT_ALLOWED_LANGUAGES else "all"
+    )
 
     parser = argparse.ArgumentParser(
-        description="Record audio while a GPIO switch is closed (or spacebar held), transcribe with STT, ask an educational LLM, and speak the answer via TTS."
+        description="Record audio via GPIO switch or spacebar, transcribe with STT, ask an educational LLM, and speak via TTS."
     )
     parser.add_argument(
         "--gpio-pin",
         type=int,
         default=DEFAULT_GPIO_PIN,
-        help=f"BCM GPIO pin number for the physical switch connected to GND (default: {DEFAULT_GPIO_PIN}, physical pin 40).",
+        help=f"BCM GPIO pin for the record switch connected to GND (default: {DEFAULT_GPIO_PIN}, physical pin 40).",
     )
     parser.add_argument(
         "--led-pin",
         type=int,
         default=DEFAULT_LED_GPIO_PIN,
-        help=f"BCM GPIO pin number for the status LED connected to GND (default: {DEFAULT_LED_GPIO_PIN}, physical pin 33).",
+        help=f"BCM GPIO pin for the status LED connected to GND (default: {DEFAULT_LED_GPIO_PIN}, physical pin 33).",
     )
-    parser.add_argument(
-        "--no-led",
-        action="store_true",
-        help="Disable the GPIO status LED.",
-    )
+    parser.add_argument("--no-led", action="store_true", help="Disable the GPIO status LED.")
     parser.add_argument(
         "--lang-pin-1",
         type=int,
@@ -230,7 +199,7 @@ def main() -> None:
         "-l", "--language",
         type=str,
         default=DEFAULT_LANGUAGE,
-        help="Force transcription and TTS language using ISO code (e.g., 'en', 'fr', 'zh', 'es'). Omit for auto-detection.",
+        help="Force transcription and TTS language using ISO code (e.g., 'en', 'fr', 'zh'). Omit for auto-detection.",
     )
     parser.add_argument(
         "--allowed-languages",
@@ -252,9 +221,9 @@ def main() -> None:
     parser.add_argument(
         "--llm-provider",
         type=str,
-        choices=llm_provider_choices,
+        choices=list(DEFAULT_LLM_MODELS.keys()),
         default=DEFAULT_LLM_PROVIDER,
-        help=f"LLM provider to use (default: '{DEFAULT_LLM_PROVIDER}'). Use 'echo' to simply repeat back.",
+        help=f"LLM provider to use (default: '{DEFAULT_LLM_PROVIDER}'). Use 'echo' to repeat back.",
     )
     parser.add_argument(
         "--llm-model",
@@ -289,13 +258,13 @@ def main() -> None:
         "--context-turns",
         type=int,
         default=DEFAULT_MAX_CONTEXT_TURNS,
-        help=f"Number of previous user/assistant exchanges to pass to the LLM for context continuation (default: {DEFAULT_MAX_CONTEXT_TURNS}, 0 to disable).",
+        help=f"Number of previous user/assistant exchanges to pass to the LLM (default: {DEFAULT_MAX_CONTEXT_TURNS}, 0 to disable).",
     )
     parser.add_argument(
         "--context-idle-timeout",
         type=float,
         default=DEFAULT_CONTEXT_IDLE_TIMEOUT,
-        help=f"Seconds of inactivity before automatically resetting LLM conversation context (default: {DEFAULT_CONTEXT_IDLE_TIMEOUT:.0f}s).",
+        help=f"Seconds of inactivity before resetting LLM conversation context (default: {DEFAULT_CONTEXT_IDLE_TIMEOUT:.0f}s).",
     )
     parser.add_argument(
         "--sessions-dir",
@@ -308,32 +277,32 @@ def main() -> None:
         action="store_true",
         help="Disable saving session transcripts and audit logs to disk.",
     )
-    parser.add_argument(
-        "--no-tts",
-        action="store_true",
-        help="Disable text-to-speech readback.",
-    )
+    parser.add_argument("--no-tts", action="store_true", help="Disable text-to-speech readback.")
     parser.add_argument(
         "--speed",
         type=float,
         default=DEFAULT_SPEECH_SPEED,
-        help=f"TTS length scale (default: {DEFAULT_SPEECH_SPEED}; >1.0 is slower/clearer, <1.0 is faster).",
+        help=f"TTS length scale (default: {DEFAULT_SPEECH_SPEED}; >1.0 is slower, <1.0 is faster).",
     )
     parser.add_argument(
         "-e", "--effect",
         type=str,
         choices=effect_choices,
         default=DEFAULT_VOICE_EFFECT,
-        help=f"Goofy voice effect to apply (default: '{DEFAULT_VOICE_EFFECT}'). Use 'random' to pick a surprise effect each time, or 'none' for raw voice.",
+        help=f"Goofy voice effect to apply (default: '{DEFAULT_VOICE_EFFECT}'). Use 'random' or 'none'.",
     )
     parser.add_argument(
         "--zh-voice",
         type=str,
-        choices=zh_voice_choices,
+        choices=AVAILABLE_PIPER_VOICES["zh"],
         default=PIPER_VOICE_MAP["zh"],
         help=f"Chinese Piper voice model to use (default: '{PIPER_VOICE_MAP['zh']}').",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
 
     allowed_languages = None
     if args.allowed_languages and args.allowed_languages.strip().lower() != "all":
@@ -356,8 +325,7 @@ def main() -> None:
     else:
         print(f"Status LED           : GPIO {args.led_pin} (pulsing=ready, off=recording, solid=thinking)")
     if args.language:
-        lang_name = get_language_name(args.language)
-        print(f"Forced language      : {lang_name} ({args.language})")
+        print(f"Forced language      : {get_language_name(args.language)} ({args.language})")
     elif allowed_languages:
         print(f"Allowed languages    : {', '.join(allowed_languages)}")
     if not args.no_tts:
@@ -366,7 +334,7 @@ def main() -> None:
     llm_engine: Optional[LLMEngine] = None
     resolved_model = ""
     effective_provider = "echo" if args.no_llm else args.llm_provider
-    if not args.no_llm and args.llm_provider != "echo":
+    if effective_provider != "echo":
         resolved_model = args.llm_model or DEFAULT_LLM_MODELS.get(args.llm_provider, "")
         print(f"LLM provider / model : {args.llm_provider} ({resolved_model})")
         print(
@@ -404,7 +372,7 @@ def main() -> None:
     recorder: Optional[RecorderEngine] = None
     language_switch: Optional[LanguageSwitch] = None
 
-    def _handle_termination(signum: int, _frame: object) -> None:
+    def _handle_termination(_signum: int, _frame: object) -> None:
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGINT, _handle_termination)
@@ -434,6 +402,7 @@ def main() -> None:
                 gpio_pin=args.gpio_pin,
                 status_led=status_led,
             )
+
         stt_engine = FasterWhisperSTT(
             model_size=args.model,
             compute_type="int8",
@@ -443,8 +412,7 @@ def main() -> None:
 
         tts_engine: Optional[TTSEngine] = None
         if not args.no_tts:
-            custom_voice_map = dict(PIPER_VOICE_MAP)
-            custom_voice_map["zh"] = args.zh_voice
+            custom_voice_map = {**PIPER_VOICE_MAP, "zh": args.zh_voice}
             piper_tts = PiperTTSEngine(
                 speaker_device=speaker_device,
                 length_scale=args.speed,
@@ -452,7 +420,6 @@ def main() -> None:
                 voice_map=custom_voice_map,
                 status_led=status_led,
             )
-            # When language switch is enabled, preload all switchable voices (en, fr, zh)
             piper_tts.preload_voices(
                 forced_language=None if language_switch is not None else args.language
             )
@@ -473,7 +440,7 @@ def main() -> None:
             language_switch=language_switch,
         )
     except KeyboardInterrupt:
-        print("\nInterrupted. Cleaning up GPIO...")
+        print("\nInterrupted. Cleaning up...")
     finally:
         if language_switch is not None:
             language_switch.close()
@@ -482,9 +449,8 @@ def main() -> None:
         if status_led is not None:
             status_led.close()
         session_logger.close()
+    print("Exiting.")
 
 
 if __name__ == "__main__":
     main()
-
-

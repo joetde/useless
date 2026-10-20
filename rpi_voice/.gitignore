@@ -3,5 +3,5 @@ __pycache__/
 voices/
 sessions/
 .env
-
+.lgd-nfy*
 

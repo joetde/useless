@@ -1,5 +1,5 @@
 import atexit
-from typing import Optional
+from typing import Any, Optional
 
 from .config import (
     DEFAULT_LED_GPIO_PIN,
@@ -8,14 +8,43 @@ from .config import (
 )
 
 
+def release_gpio_device(device: Any, default_pin: Optional[int] = None, pull_down: bool = False) -> None:
+    """Safely close a gpiozero device and release its underlying lgpio pin."""
+    if device is None:
+        return
+    pin_obj = getattr(device, "pin", None)
+    factory = getattr(pin_obj, "factory", None)
+    chip_handle = getattr(factory, "_handle", None)
+    pin_info = getattr(pin_obj, "info", None)
+    pin_num = getattr(pin_obj, "_number", default_pin)
+
+    try:
+        device.close()
+    except Exception:
+        pass
+
+    if factory is not None and pin_info is not None:
+        getattr(factory, "pins", {}).pop(pin_info, None)
+
+    if chip_handle is not None and pin_num is not None:
+        try:
+            import lgpio
+
+            lgpio.gpio_free(chip_handle, pin_num)
+            if pull_down:
+                lgpio.gpio_claim_input(chip_handle, pin_num, lgpio.SET_PULL_DOWN)
+                lgpio.gpio_free(chip_handle, pin_num)
+        except Exception:
+            pass
+
+
 class StatusLED:
     """
     Controls a status LED connected between a GPIO pin (default BCM 13, physical pin 33)
     and Ground:
       - `pulse_ready()`: Gently pulses when the device is ready to take input.
-      - `off()`: Turns off (e.g., while the recording button is pressed or when idle/exiting).
-      - `solid_thinking()`: Turns solid ON while processing (STT / LLM / TTS synthesis)
-        until audio starts playing on the speaker.
+      - `off()`: Turns off (while recording or speaking, or when exiting).
+      - `solid_thinking()`: Turns solid ON while processing (STT / LLM / TTS synthesis).
     """
 
     def __init__(
@@ -52,7 +81,7 @@ class StatusLED:
             )
 
     def off(self) -> None:
-        """Turn the LED completely off (e.g., while the switch/button is pressed)."""
+        """Turn the LED completely off."""
         self._state = "off"
         if self._led is not None:
             self._led.off()
@@ -64,31 +93,12 @@ class StatusLED:
             self._led.on()
 
     def close(self) -> None:
-        """Turn off the LED, set the pin to input with pull-down (0V), and release the GPIO line so no current remains."""
+        """Turn off the LED, set the pin to input with pull-down (0V), and release the GPIO line."""
         if self._led is not None:
-            pin_obj = getattr(self._led, "pin", None)
-            factory = getattr(pin_obj, "factory", None)
-            chip_handle = getattr(factory, "_handle", None)
-            pin_info = getattr(pin_obj, "info", None)
-            pin_num = getattr(pin_obj, "_number", self.gpio_pin)
             try:
                 self._led.off()
                 self._led.value = 0.0
             except Exception:
                 pass
-            try:
-                self._led.close()
-            except Exception:
-                pass
-            if factory is not None and pin_info is not None:
-                getattr(factory, "pins", {}).pop(pin_info, None)
-            if chip_handle is not None and pin_num is not None:
-                try:
-                    import lgpio
-
-                    lgpio.gpio_free(chip_handle, pin_num)
-                    lgpio.gpio_claim_input(chip_handle, pin_num, lgpio.SET_PULL_DOWN)
-                    lgpio.gpio_free(chip_handle, pin_num)
-                except Exception:
-                    pass
+            release_gpio_device(self._led, self.gpio_pin, pull_down=True)
             self._led = None

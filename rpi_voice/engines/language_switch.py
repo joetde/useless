@@ -15,6 +15,7 @@ from .config import (
     TTS_LANG_SWITCH_FILENAME,
     get_language_name,
 )
+from .led import release_gpio_device
 
 
 class LanguageSwitch:
@@ -53,11 +54,7 @@ class LanguageSwitch:
         self.bounce_time = bounce_time
         self.settle_time = settle_time
         self.tts_engine = tts_engine
-        self.announcements = (
-            dict(announcements)
-            if announcements is not None
-            else dict(LANGUAGE_SWITCH_ANNOUNCEMENTS)
-        )
+        self.announcements = dict(announcements or LANGUAGE_SWITCH_ANNOUNCEMENTS)
         self.on_change = on_change
         self.announce_changes = announce_changes
 
@@ -76,14 +73,12 @@ class LanguageSwitch:
 
     def read_language(self) -> str:
         """Read the instantaneous switch GPIO states and map to a language code."""
-        b1 = getattr(self, "button_1", None)
-        b2 = getattr(self, "button_2", None)
-        if b1 is None or b2 is None:
+        if self.button_1 is None or self.button_2 is None:
             return self._current_language
 
         # is_pressed is True when the GPIO pin is pulled LOW to GND
-        state_1_low = bool(b1.is_pressed)
-        state_2_low = bool(b2.is_pressed)
+        state_1_low = bool(self.button_1.is_pressed)
+        state_2_low = bool(self.button_2.is_pressed)
 
         if state_1_low and not state_2_low:
             return self.lang_state_1
@@ -103,9 +98,7 @@ class LanguageSwitch:
 
     def get_announcement_text(self, lang_code: str) -> str:
         """Return the spoken phrase in `lang_code` announcing the language switch."""
-        if lang_code in self.announcements:
-            return self.announcements[lang_code]
-        return f"Now switching to {get_language_name(lang_code)}."
+        return self.announcements.get(lang_code, f"Now switching to {get_language_name(lang_code)}.")
 
     def start_monitoring(self) -> None:
         """Start the background thread that watches for switch changes at any time."""
@@ -143,7 +136,7 @@ class LanguageSwitch:
 
     def _handle_language_change(self, new_lang: str) -> None:
         phrase = self.get_announcement_text(new_lang)
-        print(f"\n[Language Switch] {self.describe_state(new_lang)} — \"{phrase}\"")
+        print(f'\n[Language Switch] {self.describe_state(new_lang)} — "{phrase}"')
 
         if self.on_change is not None:
             try:
@@ -163,29 +156,6 @@ class LanguageSwitch:
             except Exception as e:
                 print(f"Warning: Could not speak language switch announcement ({e}).")
 
-    def _release_button(self, attr_name: str, default_pin: int) -> None:
-        btn = getattr(self, attr_name, None)
-        if btn is not None:
-            pin_obj = getattr(btn, "pin", None)
-            factory = getattr(pin_obj, "factory", None)
-            chip_handle = getattr(factory, "_handle", None)
-            pin_info = getattr(pin_obj, "info", None)
-            pin_num = getattr(pin_obj, "_number", default_pin)
-            try:
-                btn.close()
-            except Exception:
-                pass
-            if factory is not None and pin_info is not None:
-                getattr(factory, "pins", {}).pop(pin_info, None)
-            if chip_handle is not None and pin_num is not None:
-                try:
-                    import lgpio
-
-                    lgpio.gpio_free(chip_handle, pin_num)
-                except Exception:
-                    pass
-            setattr(self, attr_name, None)
-
     def close(self) -> None:
         """Stop monitoring and release GPIO pins."""
         self._stop_event.set()
@@ -193,5 +163,8 @@ class LanguageSwitch:
             if threading.current_thread() is not self._monitor_thread:
                 self._monitor_thread.join(timeout=1.0)
         self._monitor_thread = None
-        self._release_button("button_1", self.pin_1)
-        self._release_button("button_2", self.pin_2)
+
+        release_gpio_device(self.button_1, self.pin_1)
+        self.button_1 = None
+        release_gpio_device(self.button_2, self.pin_2)
+        self.button_2 = None

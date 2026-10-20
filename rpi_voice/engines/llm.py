@@ -7,6 +7,7 @@ import requests
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -30,13 +31,9 @@ class ChatTurn:
 
 def clean_text_for_speech(text: str) -> str:
     """Strip markdown formatting and extra whitespace so TTS reads naturally."""
-    # Remove markdown bold/italic/code symbols (*, _, `, #, ~)
     cleaned = re.sub(r"[*_`#~]+", "", text)
-    # Remove markdown links [label](url) -> label
     cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
-    # Remove leading bullet markers on lines
     cleaned = re.sub(r"(?m)^\s*[-•]\s+", "", cleaned)
-    # Collapse multiple whitespace/newlines into single spaces
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip()
 
@@ -44,8 +41,18 @@ def clean_text_for_speech(text: str) -> str:
 class LLMEngine(ABC):
     """Abstract base class for Large Language Model engines."""
 
-    def __init__(self, system_prompt: str = DEFAULT_SYSTEM_PROMPT):
+    def __init__(
+        self,
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        temperature: float = 0.3,
+        max_output_tokens: int = 250,
+        timeout: float = 15.0,
+    ):
         self.system_prompt = system_prompt
+        self.temperature = temperature
+        self.max_output_tokens = max_output_tokens
+        self.timeout = timeout
+        self._session = requests.Session()
 
     def _build_system_instruction(self, language: Optional[str] = None) -> str:
         """Build the system instruction, including a language hint when available."""
@@ -65,8 +72,7 @@ class LLMEngine(ABC):
         language: Optional[str] = None,
         history: Optional[Sequence[ChatTurn]] = None,
     ) -> Optional[str]:
-        """Send a user prompt (with optional recent chat history) to the LLM and return the plain-text response."""
-        pass
+        """Send a user prompt (with optional recent chat history) to the LLM and return plain text."""
 
 
 class EchoLLMEngine(LLMEngine):
@@ -78,15 +84,11 @@ class EchoLLMEngine(LLMEngine):
         language: Optional[str] = None,
         history: Optional[Sequence[ChatTurn]] = None,
     ) -> Optional[str]:
-        clean_prompt = prompt.strip()
-        return clean_prompt if clean_prompt else None
+        return prompt.strip() or None
 
 
 class GeminiLLMEngine(LLMEngine):
-    """
-    Lightweight Google Gemini LLM engine using the REST API.
-    Defaults to 'gemini-2.5-flash-lite' for fast, low-cost responses.
-    """
+    """Lightweight Google Gemini LLM engine using the REST API."""
 
     API_URL_TEMPLATE = (
         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -101,8 +103,12 @@ class GeminiLLMEngine(LLMEngine):
         max_output_tokens: int = 250,
         timeout: float = 15.0,
     ):
-        super().__init__(system_prompt=system_prompt)
-        # Strip optional 'models/' prefix if passed
+        super().__init__(
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            timeout=timeout,
+        )
         self.model = model.removeprefix("models/")
         self.api_key = (
             api_key
@@ -114,9 +120,6 @@ class GeminiLLMEngine(LLMEngine):
             raise ValueError(
                 "Gemini API key not found. Set GEMINI_API_KEY in your environment or pass --api-key."
             )
-        self.temperature = temperature
-        self.max_output_tokens = max_output_tokens
-        self.timeout = timeout
 
     def generate(
         self,
@@ -129,17 +132,15 @@ class GeminiLLMEngine(LLMEngine):
             return None
 
         ctx_count = len(history) if history else 0
-        ctx_info = f" with {ctx_count} prior turn(s) of context" if ctx_count > 0 else ""
+        ctx_info = f" with {ctx_count} prior turn(s) of context" if ctx_count else ""
         print(f"Asking Gemini ('{self.model}'{ctx_info})...")
-        url = self.API_URL_TEMPLATE.format(model=self.model)
 
         contents = []
-        if history:
-            for turn in history:
-                if turn.user_text:
-                    contents.append({"role": "user", "parts": [{"text": turn.user_text}]})
-                if turn.assistant_text:
-                    contents.append({"role": "model", "parts": [{"text": turn.assistant_text}]})
+        for turn in history or ():
+            if turn.user_text:
+                contents.append({"role": "user", "parts": [{"text": turn.user_text}]})
+            if turn.assistant_text:
+                contents.append({"role": "model", "parts": [{"text": turn.assistant_text}]})
         contents.append({"role": "user", "parts": [{"text": clean_prompt}]})
 
         payload = {
@@ -154,15 +155,14 @@ class GeminiLLMEngine(LLMEngine):
         }
 
         try:
-            response = requests.post(
-                url,
-                params={"key": self.api_key},
+            response = self._session.post(
+                self.API_URL_TEMPLATE.format(model=self.model),
+                headers={"x-goog-api-key": self.api_key},
                 json=payload,
                 timeout=self.timeout,
             )
             response.raise_for_status()
-            data = response.json()
-            candidates = data.get("candidates", [])
+            candidates = response.json().get("candidates", [])
             if not candidates:
                 print("Warning: Gemini returned no candidates.")
                 return None
@@ -170,7 +170,7 @@ class GeminiLLMEngine(LLMEngine):
             parts = candidates[0].get("content", {}).get("parts", [])
             raw_text = " ".join(part.get("text", "") for part in parts if "text" in part)
             return clean_text_for_speech(raw_text) or None
-        except Exception as e:
+        except requests.RequestException as e:
             print(f"Error communicating with Gemini API: {e}")
             return None
 
@@ -191,13 +191,15 @@ class OpenAICompatibleLLMEngine(LLMEngine):
         max_output_tokens: int = 250,
         timeout: float = 15.0,
     ):
-        super().__init__(system_prompt=system_prompt)
+        super().__init__(
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            timeout=timeout,
+        )
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY") or ""
-        self.temperature = temperature
-        self.max_output_tokens = max_output_tokens
-        self.timeout = timeout
 
     def generate(
         self,
@@ -210,9 +212,9 @@ class OpenAICompatibleLLMEngine(LLMEngine):
             return None
 
         ctx_count = len(history) if history else 0
-        ctx_info = f", {ctx_count} prior turn(s) of context" if ctx_count > 0 else ""
+        ctx_info = f", {ctx_count} prior turn(s) of context" if ctx_count else ""
         print(f"Asking LLM ('{self.model}' at {self.base_url}{ctx_info})...")
-        url = f"{self.base_url}/chat/completions"
+
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -220,12 +222,11 @@ class OpenAICompatibleLLMEngine(LLMEngine):
         messages = [
             {"role": "system", "content": self._build_system_instruction(language)},
         ]
-        if history:
-            for turn in history:
-                if turn.user_text:
-                    messages.append({"role": "user", "content": turn.user_text})
-                if turn.assistant_text:
-                    messages.append({"role": "assistant", "content": turn.assistant_text})
+        for turn in history or ():
+            if turn.user_text:
+                messages.append({"role": "user", "content": turn.user_text})
+            if turn.assistant_text:
+                messages.append({"role": "assistant", "content": turn.assistant_text})
         messages.append({"role": "user", "content": clean_prompt})
 
         payload = {
@@ -236,22 +237,21 @@ class OpenAICompatibleLLMEngine(LLMEngine):
         }
 
         try:
-            response = requests.post(
-                url,
+            response = self._session.post(
+                f"{self.base_url}/chat/completions",
                 headers=headers,
                 json=payload,
                 timeout=self.timeout,
             )
             response.raise_for_status()
-            data = response.json()
-            choices = data.get("choices", [])
+            choices = response.json().get("choices", [])
             if not choices:
                 print("Warning: LLM returned no choices.")
                 return None
 
             raw_text = choices[0].get("message", {}).get("content", "")
             return clean_text_for_speech(raw_text) or None
-        except Exception as e:
+        except requests.RequestException as e:
             print(f"Error communicating with LLM API: {e}")
             return None
 
@@ -268,37 +268,29 @@ def create_llm_engine(
     """Factory to instantiate an LLMEngine for the requested provider."""
     provider_key = provider.lower().strip()
     resolved_model = model or DEFAULT_LLM_MODELS.get(provider_key, DEFAULT_LLM_MODELS["gemini"])
+    common_kwargs = {
+        "system_prompt": system_prompt,
+        "temperature": temperature,
+        "max_output_tokens": max_output_tokens,
+    }
 
     if provider_key == "echo":
-        return EchoLLMEngine(system_prompt=system_prompt)
-
+        return EchoLLMEngine(**common_kwargs)
     if provider_key == "gemini":
-        return GeminiLLMEngine(
-            model=resolved_model,
-            api_key=api_key,
-            system_prompt=system_prompt,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-        )
-
+        return GeminiLLMEngine(model=resolved_model, api_key=api_key, **common_kwargs)
     if provider_key == "ollama":
         return OpenAICompatibleLLMEngine(
             model=resolved_model,
             api_key=api_key or "ollama",
             base_url=base_url or "http://localhost:11434/v1",
-            system_prompt=system_prompt,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
+            **common_kwargs,
         )
-
     if provider_key in ("openai", "openai-compatible"):
         return OpenAICompatibleLLMEngine(
             model=resolved_model,
             api_key=api_key,
             base_url=base_url or "https://api.openai.com/v1",
-            system_prompt=system_prompt,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
+            **common_kwargs,
         )
 
     raise ValueError(

@@ -3,24 +3,31 @@ from pathlib import Path
 WAVE_OUTPUT_FILENAME = "/tmp/recorded_audio.wav"
 WAVE_PREPROCESSED_FILENAME = "/tmp/recorded_audio_norm.wav"
 TTS_OUTPUT_FILENAME = "/tmp/tts_output.wav"
+TTS_LANG_SWITCH_FILENAME = "/tmp/tts_lang_switch.wav"
+
 VOICES_DIR = Path(__file__).resolve().parent.parent / "voices"
+SESSIONS_DIR = Path(__file__).resolve().parent.parent / "sessions"
+
 RATE = 16000
 TRIGGER_KEY = " "        # Spacebar
 TRIGGER_KEY_NAME = "SPACE"
 RELEASE_TIMEOUT = 0.75   # Seconds without key repeat before treating as released
-DEFAULT_GPIO_PIN = 21    # Physical pin 40 (BCM GPIO 21), connected between GPIO 21 and GND
+
+# GPIO pin numbers (BCM numbering)
+DEFAULT_GPIO_PIN = 21            # Physical pin 40, switch connected between GPIO 21 and GND
 DEFAULT_GPIO_BOUNCE_TIME = 0.05  # Seconds of debounce time for physical switch
-DEFAULT_LANG_SWITCH_PIN_1 = 2    # Physical pin 3 (BCM GPIO 2): switch state I -> French ('fr')
-DEFAULT_LANG_SWITCH_PIN_2 = 3    # Physical pin 5 (BCM GPIO 3): switch state II -> Chinese ('zh')
+DEFAULT_LANG_SWITCH_PIN_1 = 2    # Physical pin 3: switch state I -> French ('fr')
+DEFAULT_LANG_SWITCH_PIN_2 = 3    # Physical pin 5: switch state II -> Chinese ('zh')
 DEFAULT_LANG_SWITCH_SETTLE_TIME = 0.20  # Seconds switch state must remain stable before triggering
-TTS_LANG_SWITCH_FILENAME = "/tmp/tts_lang_switch.wav"
-DEFAULT_LED_GPIO_PIN = 13        # Physical pin 33 (BCM GPIO 13), LED connected between GPIO 13 and GND
-DEFAULT_LED_PULSE_FADE_IN = 1.0  # Seconds for LED fade-in when pulsing in Ready state
-DEFAULT_LED_PULSE_FADE_OUT = 1.0 # Seconds for LED fade-out when pulsing in Ready state
-DEFAULT_LANGUAGE = None  # Set to e.g. "en" or "fr" to always force a language, or None for auto-detect
-DEFAULT_STT_MODEL = "base"  # Upgraded from 'tiny' for much better multilingual & child-speech accuracy
-DEFAULT_STT_BEAM_SIZE = 3   # Balanced beam size (avoids over-searching into English loanwords while staying fast)
-DEFAULT_ALLOWED_LANGUAGES = ("en", "fr", "zh")  # Restrict auto-detection to active languages (None for all 99)
+DEFAULT_LED_GPIO_PIN = 13        # Physical pin 33, LED connected between GPIO 13 and GND
+DEFAULT_LED_PULSE_FADE_IN = 1.0
+DEFAULT_LED_PULSE_FADE_OUT = 1.0
+
+# Speech-to-Text settings
+DEFAULT_LANGUAGE = None  # Force ISO language code (e.g. "en", "fr") or None for auto-detect
+DEFAULT_STT_MODEL = "base"
+DEFAULT_STT_BEAM_SIZE = 3
+DEFAULT_ALLOWED_LANGUAGES = ("en", "fr", "zh")  # Restrict auto-detection (None for all 99)
 DEFAULT_VAD_PARAMETERS = {
     "min_silence_duration_ms": 400,
     "speech_pad_ms": 400,
@@ -28,11 +35,13 @@ DEFAULT_VAD_PARAMETERS = {
 }
 # Voice bandpass (80Hz-7.5kHz) + dynamic audio normalization to boost quiet mic levels without clipping
 STT_AUDIO_FILTER = "highpass=f=80,lowpass=f=7500,dynaudnorm=f=150:g=15:p=0.9:m=10"
-DEFAULT_SPEECH_SPEED = 1.0  # length_scale > 1.0 speaks slower, < 1.0 speaks faster
-DEFAULT_NOISE_SCALE = 0.85  # Higher noise_scale (default 0.667) adds more lively/goofy pitch & tone variation
-DEFAULT_NOISE_W_SCALE = 0.9  # Phoneme duration variability for more animated cadence
+
+# Text-to-Speech settings
+DEFAULT_SPEECH_SPEED = 1.0   # length_scale > 1.0 speaks slower, < 1.0 speaks faster
+DEFAULT_NOISE_SCALE = 0.85   # Higher noise_scale (default 0.667) adds lively pitch & tone variation
+DEFAULT_NOISE_W_SCALE = 0.9  # Phoneme duration variability for animated cadence
 DEFAULT_PRELOAD_LANGUAGES = ("en", "fr", "zh")
-DEFAULT_VOICE_EFFECT = "helium"  # Default goofy voice effect ('chipmunk', 'helium', 'monster', 'robot', 'alien', 'wobble', 'random', 'none')
+DEFAULT_VOICE_EFFECT = "helium"
 
 # Goofy FFmpeg audio filter templates ({sr} is replaced with the WAV sample rate)
 VOICE_EFFECTS = {
@@ -45,7 +54,6 @@ VOICE_EFFECTS = {
     "wobble": "vibrato=f=6:d=1.0,apulsator=hz=3",
 }
 
-# Mapping common language codes to human-readable names
 LANGUAGE_NAMES = {
     "en": "English", "es": "Spanish", "fr": "French", "de": "German",
     "it": "Italian", "pt": "Portuguese", "nl": "Dutch", "ru": "Russian",
@@ -54,14 +62,12 @@ LANGUAGE_NAMES = {
     "no": "Norwegian", "fi": "Finnish", "da": "Danish", "tr": "Turkish",
 }
 
-# Spoken announcements when switching languages via the physical GPIO switch
 LANGUAGE_SWITCH_ANNOUNCEMENTS = {
     "en": "Now switching to English.",
     "fr": "Passage au français.",
     "zh": "现在切换到中文。",
 }
 
-# Expressive Piper neural voices mapped by ISO language code
 PIPER_VOICE_MAP = {
     "en": "en_GB-semaine-medium",
     "fr": "fr_FR-tom-medium",
@@ -84,24 +90,13 @@ PIPER_VOICE_MAP = {
 }
 DEFAULT_PIPER_VOICE = "en_GB-semaine-medium"
 
-# Available downloaded/supported voices per language (including multiple Chinese voices)
 AVAILABLE_PIPER_VOICES = {
-    "en": [
-        "en_GB-semaine-medium",
-        "en_US-lessac-medium",
-    ],
-    "fr": [
-        "fr_FR-tom-medium",
-        "fr_FR-siwis-medium",
-    ],
-    "zh": [
-        "zh_CN-huayan-medium",
-        "zh_CN-xiao_ya-medium",
-        "zh_CN-chaowen-medium",
-    ],
+    "en": ["en_GB-semaine-medium", "en_US-lessac-medium"],
+    "fr": ["fr_FR-tom-medium", "fr_FR-siwis-medium"],
+    "zh": ["zh_CN-huayan-medium", "zh_CN-xiao_ya-medium", "zh_CN-chaowen-medium"],
 }
 
-# Optional default speaker IDs for multi-speaker models (e.g., SEMAINE speaker 3 = 'poppy', bubbly & animated)
+# Default speaker IDs for multi-speaker models (SEMAINE speaker 3 = 'poppy')
 PIPER_SPEAKER_MAP = {
     "en_GB-semaine-medium": 3,
 }
@@ -114,10 +109,8 @@ DEFAULT_LLM_MODELS = {
     "ollama": "llama3.2",
     "echo": "echo",
 }
-DEFAULT_LLM_MODEL = DEFAULT_LLM_MODELS[DEFAULT_LLM_PROVIDER]
-DEFAULT_MAX_CONTEXT_TURNS = 5       # Number of recent user/assistant back-and-forth exchanges to pass to LLM
-DEFAULT_CONTEXT_IDLE_TIMEOUT = 600.0  # Seconds of inactivity (10 mins) before resetting conversation context
-SESSIONS_DIR = Path(__file__).resolve().parent.parent / "sessions"
+DEFAULT_MAX_CONTEXT_TURNS = 5         # Recent user/assistant exchanges passed to LLM
+DEFAULT_CONTEXT_IDLE_TIMEOUT = 600.0  # Seconds of inactivity (10 mins) before resetting context
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are an educational voice assistant for a young child (around 3 to 5 years old). "
@@ -126,10 +119,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "2. Only provide factual, educational, and age-appropriate explanations (science, nature, math, history, language, everyday how-things-work).\n"
     "3. Do NOT engage in roleplay, pretend play, fictional storytelling, or persona adoption. If asked to roleplay or for non-educational topics, gently redirect to an educational fact.\n"
     "4. Keep answers short, warm, clear, and easy for a small child to understand (1 to 3 simple sentences).\n"
-    "5. Output plain spoken text only, suitable for Text-to-Speech. Never use markdown, bullet points, asterisks, symbols, or emojis."
-    ""
-    "Examples:"
-    "- If asked 'how are you', do not respond 'I am well, thank you', just redirect them to asking questions gently"
+    "5. Output plain spoken text only, suitable for Text-to-Speech. Never use markdown, bullet points, asterisks, symbols, or emojis.\n\n"
+    "Examples:\n"
+    "- If asked 'how are you', do not respond 'I am well, thank you', just redirect them to asking questions gently."
 )
 
 
@@ -138,4 +130,3 @@ def get_language_name(lang_code: str) -> str:
     if not lang_code:
         return "Unknown"
     return LANGUAGE_NAMES.get(lang_code, lang_code.upper())
-

@@ -60,7 +60,6 @@ flowchart TD
 rpi_voice/
 ├── record_and_transcribe.py        # CLI entrypoint & main interaction loop (run_pipeline)
 ├── ARCHITECTURE.md                 # Module and hardware architecture documentation
-├── AUDIO_RECORD_TRANSCRIBE_SUMMARY.md
 ├── engines/                        # Core modular engine package
 │   ├── __init__.py                 # Public package exports
 │   ├── config.py                   # Central constants, GPIO pins, prompts, voices, effects
@@ -103,7 +102,7 @@ Single source of truth for all defaults and mappings:
   - `LANGUAGE_SWITCH_ANNOUNCEMENTS`: Native spoken confirmations when flipping the switch (`"en"`, `"fr"`, `"zh"`).
   - `PIPER_VOICE_MAP` & `AVAILABLE_PIPER_VOICES`: Maps `"en"` (`en_GB-semaine-medium`), `"fr"` (`fr_FR-tom-medium`), `"zh"` (`zh_CN-huayan-medium`, `zh_CN-xiao_ya-medium`, `zh_CN-chaowen-medium`), and 15+ other languages to Piper ONNX models.
   - `VOICE_EFFECTS`: FFmpeg filter graphs for `"none"`, `"chipmunk"`, `"helium"`, `"monster"`, `"robot"`, `"alien"`, and `"wobble"`.
-- **LLM & Guardrails**: `DEFAULT_SYSTEM_PROMPT` enforcing factual, age-appropriate (4–8 years old), 1–3 sentence plain-text answers with no roleplay or markdown.
+- **LLM & Guardrails**: `DEFAULT_SYSTEM_PROMPT` enforcing factual, age-appropriate (3–5 years old), 1–3 sentence plain-text answers with no roleplay or markdown.
 
 ---
 
