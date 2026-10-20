@@ -12,6 +12,7 @@ RATE = 16000
 TRIGGER_KEY = " "        # Spacebar
 TRIGGER_KEY_NAME = "SPACE"
 RELEASE_TIMEOUT = 0.75   # Seconds without key repeat before treating as released
+DEFAULT_POST_RELEASE_DURATION = 0.25  # Extra seconds recorded after switch release so trailing syllables aren't clipped
 
 # GPIO pin numbers (BCM numbering)
 DEFAULT_GPIO_PIN = 21            # Physical pin 40, switch connected between GPIO 21 and GND
@@ -26,15 +27,33 @@ DEFAULT_LED_PULSE_FADE_OUT = 1.0
 # Speech-to-Text settings
 DEFAULT_LANGUAGE = None  # Force ISO language code (e.g. "en", "fr") or None for auto-detect
 DEFAULT_STT_MODEL = "base"
-DEFAULT_STT_BEAM_SIZE = 3
+DEFAULT_STT_BEAM_SIZE = 5
 DEFAULT_ALLOWED_LANGUAGES = ("en", "fr", "zh")  # Restrict auto-detection (None for all 99)
 DEFAULT_VAD_PARAMETERS = {
-    "min_silence_duration_ms": 400,
-    "speech_pad_ms": 400,
-    "threshold": 0.35,
+    "min_silence_duration_ms": 500,
+    "speech_pad_ms": 500,
+    "threshold": 0.25,
 }
-# Voice bandpass (80Hz-7.5kHz) + dynamic audio normalization to boost quiet mic levels without clipping
-STT_AUDIO_FILTER = "highpass=f=80,lowpass=f=7500,dynaudnorm=f=150:g=15:p=0.9:m=10"
+# Voice bandpass (85Hz-7.5kHz) + FFT noise reduction + speech normalizer for short child utterances
+STT_AUDIO_FILTER = (
+    "highpass=f=85,lowpass=f=7500,afftdn=nf=-25,speechnorm=e=6:r=0.0001:l=1"
+)
+
+# Domain-specific initial prompts per language to bias Whisper toward child questions and Simplified Chinese
+STT_INITIAL_PROMPTS = {
+    "fr": (
+        "Bonjour, comment ça va ? Il est quelle heure ? On se couche à quelle heure ? "
+        "C'est quoi les nuages, le soleil, la lune, les étoiles, la pluie, les avions, les animaux, les canards ? "
+        "Pourquoi le ciel est bleu ? Comment les avions volent ?"
+    ),
+    "en": (
+        "Hello, how are you? What time is it? What are clouds, the sun, the moon, stars, rain, airplanes, animals? "
+        "Why is the sky blue? How do airplanes fly?"
+    ),
+    "zh": (
+        "你好，现在几点了？这是什么？为什么天空是蓝色的？云、太阳、月亮、星星、飞机、动物是什么？飞机是怎么飞的？"
+    ),
+}
 
 # Text-to-Speech settings
 DEFAULT_SPEECH_SPEED = 1.0   # length_scale > 1.0 speaks slower, < 1.0 speaks faster
@@ -116,10 +135,13 @@ DEFAULT_SYSTEM_PROMPT = (
     "You are an educational voice assistant for a young child (around 3 to 5 years old). "
     "Follow these rules strictly:\n"
     "1. Always reply in the exact same language as the user's question (for example English, French, or Chinese).\n"
-    "2. Only provide factual, educational, and age-appropriate explanations (science, nature, math, history, language, everyday how-things-work).\n"
-    "3. Do NOT engage in roleplay, pretend play, fictional storytelling, or persona adoption. If asked to roleplay or for non-educational topics, gently redirect to an educational fact.\n"
-    "4. Keep answers short, warm, clear, and easy for a small child to understand (1 to 3 simple sentences).\n"
-    "5. Output plain spoken text only, suitable for Text-to-Speech. Never use markdown, bullet points, asterisks, symbols, or emojis.\n\n"
+    "2. The input comes from automatic Speech-to-Text of a young child's voice and may contain phonetic transcription errors "
+    "(e.g. 'ennuiage' instead of 'nuage', 'calards' instead of 'canards', 'aimat' instead of 'volent', 'Keller' instead of 'quelle heure'). "
+    "Infer the intended words from phonetic similarity and conversation context before answering.\n"
+    "3. Only provide factual, educational, and age-appropriate explanations (science, nature, math, history, language, everyday how-things-work).\n"
+    "4. Do NOT engage in roleplay, pretend play, fictional storytelling, or persona adoption. If asked to roleplay or for non-educational topics, gently redirect to an educational fact.\n"
+    "5. Keep answers short, warm, clear, and easy for a small child to understand (1 to 3 simple sentences).\n"
+    "6. Output plain spoken text only, suitable for Text-to-Speech. Never use markdown, bullet points, asterisks, symbols, or emojis.\n\n"
     "Examples:\n"
     "- If asked 'how are you', do not respond 'I am well, thank you', just redirect them to asking questions gently."
 )

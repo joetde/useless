@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 from .config import (
     DEFAULT_GPIO_BOUNCE_TIME,
     DEFAULT_GPIO_PIN,
+    DEFAULT_POST_RELEASE_DURATION,
     RATE,
     RELEASE_TIMEOUT,
     TRIGGER_KEY,
@@ -101,6 +102,8 @@ class RecorderEngine(ABC):
             "-f", "S16_LE",
             "-r", str(self.rate),
             "-c", "1",
+            "--buffer-time=100000",
+            "--period-time=25000",
             output_file,
         ]
         return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -129,7 +132,7 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
     """
     Waits for a physical switch connected between a GPIO pin (default BCM 21, physical pin 40)
     and Ground to be closed, records audio via ALSA `arecord` while closed, and stops
-    when the switch is opened.
+    when the switch is opened (after a brief `post_release_duration` tail so trailing words aren't clipped).
     """
 
     def __init__(
@@ -138,6 +141,7 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
         gpio_pin: int = DEFAULT_GPIO_PIN,
         rate: int = RATE,
         bounce_time: float = DEFAULT_GPIO_BOUNCE_TIME,
+        post_release_duration: float = DEFAULT_POST_RELEASE_DURATION,
         status_led: Optional["StatusLED"] = None,
     ):
         super().__init__(device=device, rate=rate, status_led=status_led)
@@ -145,6 +149,7 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
 
         self.gpio_pin = gpio_pin
         self.bounce_time = bounce_time
+        self.post_release_duration = max(0.0, float(post_release_duration))
         self.button = Button(gpio_pin, pull_up=True, bounce_time=bounce_time)
         atexit.register(self.close)
 
@@ -185,7 +190,11 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
                     if has_tty and _is_quit_key(_read_available_keys(0.0)):
                         self._stop_arecord(process)
                         return None
-                    time.sleep(0.03)
+                    time.sleep(0.02)
+
+                # Capture a brief post-release tail so the final syllable isn't cut off
+                if self.post_release_duration > 0 and process.poll() is None:
+                    time.sleep(self.post_release_duration)
             finally:
                 if self.status_led is not None:
                     self.status_led.solid_thinking()

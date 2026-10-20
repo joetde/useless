@@ -22,6 +22,7 @@ from .config import (
     DEFAULT_VAD_PARAMETERS,
     RATE,
     STT_AUDIO_FILTER,
+    STT_INITIAL_PROMPTS,
     WAVE_PREPROCESSED_FILENAME,
     get_language_name,
 )
@@ -34,8 +35,8 @@ def preprocess_audio_file(
     sample_rate: int = RATE,
 ) -> str:
     """
-    Apply a voice bandpass filter (80Hz-7.5kHz) and dynamic audio normalization via FFmpeg
-    to boost quiet microphone recordings and strip low-frequency rumble before STT.
+    Apply a voice bandpass filter (85Hz-7.5kHz), FFT noise reduction, and speech normalization
+    via FFmpeg to boost quiet child speech and strip low-frequency rumble before STT.
     Falls back to `input_path` if FFmpeg fails.
     """
     if not audio_filter:
@@ -92,6 +93,7 @@ class STTEngine(ABC):
         self,
         audio_path: str,
         language: Optional[str] = DEFAULT_LANGUAGE,
+        context_hint: Optional[str] = None,
     ) -> Optional[TranscriptionResult]:
         """Transcribe an audio file and return a structured TranscriptionResult."""
 
@@ -107,6 +109,7 @@ class FasterWhisperSTT(STTEngine):
         vad_filter: bool = True,
         vad_parameters: Optional[Dict[str, float]] = None,
         allowed_languages: Optional[Sequence[str]] = DEFAULT_ALLOWED_LANGUAGES,
+        initial_prompts: Optional[Dict[str, str]] = None,
         preprocess_audio: bool = True,
         cpu_threads: int = 4,
     ):
@@ -120,6 +123,7 @@ class FasterWhisperSTT(STTEngine):
             if allowed_languages
             else None
         )
+        self.initial_prompts = dict(initial_prompts or STT_INITIAL_PROMPTS)
         self.preprocess_audio = preprocess_audio
 
         print(f"Loading Whisper model ('{model_size}') with {compute_type.upper()} precision...")
@@ -157,10 +161,18 @@ class FasterWhisperSTT(STTEngine):
         detected_lang, lang_prob = all_probs[0] if all_probs else ("en", 0.0)
         return detected_lang, lang_prob, top_langs
 
+    def _build_initial_prompt(self, lang_code: str, context_hint: Optional[str]) -> Optional[str]:
+        base_prompt = self.initial_prompts.get(lang_code, "").strip()
+        hint = (context_hint or "").strip()
+        if base_prompt and hint:
+            return f"{base_prompt} {hint}"
+        return base_prompt or hint or None
+
     def transcribe(
         self,
         audio_path: str,
         language: Optional[str] = DEFAULT_LANGUAGE,
+        context_hint: Optional[str] = None,
     ) -> Optional[TranscriptionResult]:
         if not os.path.exists(audio_path) or os.path.getsize(audio_path) <= 44:
             return None
@@ -211,15 +223,15 @@ class FasterWhisperSTT(STTEngine):
             best_of=self.beam_size,
             patience=1.0,
             length_penalty=1.0,
-            repetition_penalty=1.0,
-            no_repeat_ngram_size=0,
+            repetition_penalty=1.05,
+            no_repeat_ngram_size=3,
             log_prob_threshold=-1.0,
             no_speech_threshold=0.6,
             compression_ratio_threshold=2.4,
             condition_on_previous_text=False,
             prompt_reset_on_temperature=0.5,
             temperatures=[0.0, 0.2, 0.4],
-            initial_prompt=None,
+            initial_prompt=self._build_initial_prompt(detected_lang, context_hint),
             prefix=None,
             suppress_blank=True,
             suppress_tokens=get_suppressed_tokens(tokenizer, [-1]),

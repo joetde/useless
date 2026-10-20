@@ -95,10 +95,19 @@ def run_pipeline(
         if status_led is not None:
             status_led.solid_thinking()
 
+        context_history = (
+            session_logger.get_context_for_next_turn() if session_logger is not None else []
+        )
+        last_topic_hint = context_history[-1].user_text if context_history else None
+
         active_language = (
             language_switch.current_language if language_switch is not None else language
         )
-        result = stt_engine.transcribe(audio_path, language=active_language)
+        result = stt_engine.transcribe(
+            audio_path,
+            language=active_language,
+            context_hint=last_topic_hint,
+        )
         if result is None:
             continue
 
@@ -111,9 +120,6 @@ def run_pipeline(
         )
         spoken_text = result.text
         llm_reply: Optional[str] = None
-        context_history = (
-            session_logger.get_context_for_next_turn() if session_logger is not None else []
-        )
 
         if llm_engine is not None:
             llm_reply = llm_engine.generate(
