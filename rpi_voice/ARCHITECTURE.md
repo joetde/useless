@@ -100,7 +100,7 @@ Single source of truth for all defaults and mappings:
 - **Language & Voice Mappings**:
   - `LANGUAGE_NAMES`: ISO code $\rightarrow$ human-readable language name.
   - `LANGUAGE_SWITCH_ANNOUNCEMENTS`: Native spoken confirmations when flipping the switch (`"en"`, `"fr"`, `"zh"`).
-  - `PIPER_VOICE_MAP` & `AVAILABLE_PIPER_VOICES`: Maps `"en"` (`en_GB-semaine-medium`), `"fr"` (`fr_FR-tom-medium`), `"zh"` (`zh_CN-huayan-medium`, `zh_CN-xiao_ya-medium`, `zh_CN-chaowen-medium`), and 15+ other languages to Piper ONNX models.
+  - `PIPER_VOICE_MAP` & `AVAILABLE_PIPER_VOICES`: Maps `"en"` (`en_GB-semaine-medium`), `"fr"` (`fr_FR-upmc-medium`), `"zh"` (`zh_CN-huayan-medium`, `zh_CN-xiao_ya-medium`, `zh_CN-chaowen-medium`), and 15+ other languages to Piper ONNX models.
   - `VOICE_EFFECTS`: FFmpeg filter graphs for `"none"`, `"chipmunk"`, `"helium"`, `"monster"`, `"robot"`, `"alien"`, and `"wobble"`.
 - **LLM & Guardrails**: `DEFAULT_SYSTEM_PROMPT` enforcing factual, age-appropriate (3–5 years old), 1–3 sentence plain-text answers with no roleplay or markdown.
 

@@ -89,7 +89,7 @@ LANGUAGE_SWITCH_ANNOUNCEMENTS = {
 
 PIPER_VOICE_MAP = {
     "en": "en_GB-semaine-medium",
-    "fr": "fr_FR-tom-medium",
+    "fr": "fr_FR-upmc-medium",
     "zh": "zh_CN-huayan-medium",
     "es": "es_ES-sharvard-medium",
     "de": "de_DE-mls-medium",
@@ -111,13 +111,14 @@ DEFAULT_PIPER_VOICE = "en_GB-semaine-medium"
 
 AVAILABLE_PIPER_VOICES = {
     "en": ["en_GB-semaine-medium", "en_US-lessac-medium"],
-    "fr": ["fr_FR-tom-medium", "fr_FR-siwis-medium"],
+    "fr": ["fr_FR-upmc-medium", "fr_FR-siwis-medium", "fr_FR-tom-medium", "fr_FR-gilles-low"],
     "zh": ["zh_CN-huayan-medium", "zh_CN-xiao_ya-medium", "zh_CN-chaowen-medium"],
 }
 
-# Default speaker IDs for multi-speaker models (SEMAINE speaker 3 = 'poppy')
+# Default speaker IDs for multi-speaker models (SEMAINE speaker 3 = 'poppy', UPMC speaker 0 = 'jessica')
 PIPER_SPEAKER_MAP = {
     "en_GB-semaine-medium": 3,
+    "fr_FR-upmc-medium": 0,
 }
 
 # Default LLM configuration
