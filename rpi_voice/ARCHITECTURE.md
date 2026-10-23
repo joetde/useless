@@ -126,7 +126,7 @@ Automatically finds attached USB audio peripherals by parsing `arecord -l` and `
 - **`LanguageSwitch`**: Monitors the 3-state physical switch on BCM GPIO 2 and GPIO 3 in a background daemon thread:
   - `read_language()`: Maps `GPIO 2 LOW` $\rightarrow$ `"fr"`, `GPIO 3 LOW` $\rightarrow$ `"zh"`, and `Both HIGH` $\rightarrow$ `"en"`.
   - `_monitor_loop()`: Applies a `200ms` settling window (`DEFAULT_LANG_SWITCH_SETTLE_TIME`) so flipping across the center `Both HIGH` position from State I to State II does not trigger an intermediate English announcement.
-  - `_handle_language_change()`: Updates `current_language`, interrupts any in-progress TTS playback (`tts_engine.interrupt_playback()`), speaks the native announcement (`"Passage au français."`, `"现在切换到中文。"`, or `"Now switching to English."`), and restores the ready LED pulse.
+  - `_handle_language_change()`: Updates `current_language`, interrupts any in-progress TTS playback (`tts_engine.interrupt_playback()`), speaks the native announcement (`"Maintenant, c'est le français !"`, `"现在是中文啦！"`, or `"Now it's English!"`), and restores the ready LED pulse.
 
 ---
 

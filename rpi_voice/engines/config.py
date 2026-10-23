@@ -82,9 +82,9 @@ LANGUAGE_NAMES = {
 }
 
 LANGUAGE_SWITCH_ANNOUNCEMENTS = {
-    "en": "Now switching to English.",
-    "fr": "Passage au français.",
-    "zh": "现在切换到中文。",
+    "en": "Now it's English!",
+    "fr": "Maintenant, c'est le français !",
+    "zh": "现在是中文啦！",
 }
 
 PIPER_VOICE_MAP = {
