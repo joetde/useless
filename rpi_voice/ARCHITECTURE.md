@@ -160,7 +160,7 @@ Defines the abstract `RecorderEngine` interface and two concrete implementations
   - Manages local ONNX models in `voices/` (auto-downloading missing models via `piper.download_voices`).
   - `preload_voices()`: Loads English, French, and Chinese models into memory at startup for zero-latency switching.
   - `synthesize_to_file()`: Synthesizes speech via `PiperVoice.synthesize_wav` (with multi-speaker support such as `en_GB-semaine-medium` speaker 3) and applies the selected FFmpeg goofy voice effect (`helium`, `chipmunk`, `monster`, `robot`, `alien`, `wobble`, or `random`).
-  - `speak()` & `interrupt_playback()`: Thread-safe synthesis and `aplay` playback with support for interrupting ongoing speech when the language switch is flipped and restoring the `StatusLED` ready pulse afterward.
+  - `speak()` & `interrupt_playback()`: Thread-safe sentence-by-sentence streaming synthesis piped directly through FFmpeg (for goofy voice effects) into `aplay` with zero intermediate disk I/O, plus support for interrupting ongoing speech when the language switch is flipped and restoring the `StatusLED` ready pulse afterward.
 
 ---
 

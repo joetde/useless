@@ -75,6 +75,8 @@ class PiperTTSEngine(TTSEngine):
         self.loaded_voices: Dict[str, PiperVoice] = {}
         self._lock = threading.Lock()
         self._playback_proc: Optional[subprocess.Popen] = None
+        self._ffmpeg_proc: Optional[subprocess.Popen] = None
+        self._abort_event = threading.Event()
         self._last_applied_effect: str = "none"
 
     def get_voice_name(self, lang_code: str) -> str:
@@ -193,9 +195,9 @@ class PiperTTSEngine(TTSEngine):
 
         return output_wav
 
-    def interrupt_playback(self) -> None:
-        """Stop any currently playing `aplay` process immediately."""
-        proc = self._playback_proc
+    @staticmethod
+    def _terminate_process(proc: Optional[subprocess.Popen]) -> None:
+        """Terminate a subprocess cleanly if it is still running."""
         if proc is not None and proc.poll() is None:
             try:
                 proc.terminate()
@@ -208,6 +210,12 @@ class PiperTTSEngine(TTSEngine):
             except OSError:
                 pass
 
+    def interrupt_playback(self) -> None:
+        """Stop any ongoing synthesis and currently playing `aplay`/`ffmpeg` processes immediately."""
+        self._abort_event.set()
+        self._terminate_process(self._playback_proc)
+        self._terminate_process(self._ffmpeg_proc)
+
     def speak(
         self,
         text: str,
@@ -215,26 +223,146 @@ class PiperTTSEngine(TTSEngine):
         output_wav: str = TTS_OUTPUT_FILENAME,
         restore_led_ready: bool = False,
     ) -> None:
-        """Synthesize text to speech and play it through the configured speaker."""
+        """Synthesize text sentence-by-sentence and stream directly through FFmpeg -> `aplay`."""
+        clean_text = text.strip()
+        if not clean_text:
+            return
+
         with self._lock:
+            self._abort_event.clear()
             was_ready = self.status_led is not None and self.status_led.state == "ready"
-            wav_path = self.synthesize_to_file(text, lang_code=lang_code, output_wav=output_wav)
-            if not wav_path:
-                if self.status_led is not None and not (restore_led_ready or was_ready):
-                    self.status_led.off()
-                return
 
             voice_name = self.get_voice_name(lang_code)
-            fx_info = f", effect: {self._last_applied_effect}" if self._last_applied_effect != "none" else ""
-            print(f"Speaking back ({get_language_name(lang_code)} [{voice_name}{fx_info}])...")
-            if self.status_led is not None:
-                self.status_led.off()
+            voice = self.get_voice(lang_code)
+            sample_rate = voice.config.sample_rate
+            speaker_id = self.speaker_map.get(voice_name) if voice.config.num_speakers > 1 else None
+
+            syn_config = SynthesisConfig(
+                speaker_id=speaker_id,
+                length_scale=self.length_scale,
+                noise_scale=self.noise_scale,
+                noise_w_scale=self.noise_w_scale,
+            )
+
+            effect_name = self._resolve_effect()
+            self._last_applied_effect = effect_name
+            filter_template = VOICE_EFFECTS.get(effect_name, "") if effect_name != "none" else ""
+            audio_filter = filter_template.format(sr=sample_rate) if filter_template else ""
+
+            aplay_cmd = [
+                "aplay",
+                "-q",
+                "-D",
+                self.speaker_device,
+                "-f",
+                "S16_LE",
+                "-r",
+                str(sample_rate),
+                "-c",
+                "1",
+                "-t",
+                "raw",
+            ]
+
+            ffmpeg_proc: Optional[subprocess.Popen] = None
+            aplay_proc: Optional[subprocess.Popen] = None
+            started_playback = False
+
             try:
-                self._playback_proc = subprocess.Popen(
-                    ["aplay", "-q", "-D", self.speaker_device, wav_path]
-                )
-                self._playback_proc.wait()
+                for chunk in voice.synthesize(clean_text, syn_config=syn_config):
+                    if self._abort_event.is_set():
+                        break
+                    pcm_bytes = chunk.audio_int16_bytes
+                    if not pcm_bytes:
+                        continue
+
+                    if not started_playback:
+                        started_playback = True
+                        fx_info = f", effect: {effect_name}" if effect_name != "none" else ""
+                        print(f"Speaking back ({get_language_name(lang_code)} [{voice_name}{fx_info}])...")
+                        if self.status_led is not None:
+                            self.status_led.off()
+
+                        if audio_filter:
+                            ffmpeg_proc = subprocess.Popen(
+                                [
+                                    "ffmpeg",
+                                    "-loglevel",
+                                    "error",
+                                    "-probesize",
+                                    "32",
+                                    "-f",
+                                    "s16le",
+                                    "-ar",
+                                    str(sample_rate),
+                                    "-ac",
+                                    "1",
+                                    "-i",
+                                    "pipe:0",
+                                    "-af",
+                                    audio_filter,
+                                    "-f",
+                                    "s16le",
+                                    "-ar",
+                                    str(sample_rate),
+                                    "-ac",
+                                    "1",
+                                    "pipe:1",
+                                ],
+                                stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE,
+                            )
+                            self._ffmpeg_proc = ffmpeg_proc
+                            aplay_proc = subprocess.Popen(
+                                aplay_cmd,
+                                stdin=ffmpeg_proc.stdout,
+                            )
+                            self._playback_proc = aplay_proc
+                            if ffmpeg_proc.stdout is not None:
+                                ffmpeg_proc.stdout.close()
+                        else:
+                            aplay_proc = subprocess.Popen(
+                                aplay_cmd,
+                                stdin=subprocess.PIPE,
+                            )
+                            self._playback_proc = aplay_proc
+
+                    target_stdin = ffmpeg_proc.stdin if ffmpeg_proc is not None else (
+                        aplay_proc.stdin if aplay_proc is not None else None
+                    )
+                    if target_stdin is None:
+                        break
+                    try:
+                        target_stdin.write(pcm_bytes)
+                        target_stdin.flush()
+                    except (BrokenPipeError, OSError):
+                        break
+
+                # Close input pipes so ffmpeg and aplay flush remaining buffered audio and exit cleanly
+                if ffmpeg_proc is not None and ffmpeg_proc.stdin is not None:
+                    try:
+                        ffmpeg_proc.stdin.close()
+                    except OSError:
+                        pass
+                elif aplay_proc is not None and aplay_proc.stdin is not None:
+                    try:
+                        aplay_proc.stdin.close()
+                    except OSError:
+                        pass
+
+                if not self._abort_event.is_set():
+                    if ffmpeg_proc is not None:
+                        ffmpeg_proc.wait()
+                    if aplay_proc is not None:
+                        aplay_proc.wait()
             finally:
+                if self._abort_event.is_set():
+                    self._terminate_process(aplay_proc)
+                    self._terminate_process(ffmpeg_proc)
                 self._playback_proc = None
-                if self.status_led is not None and (restore_led_ready or was_ready):
-                    self.status_led.pulse_ready()
+                self._ffmpeg_proc = None
+                if self.status_led is not None:
+                    if restore_led_ready or was_ready:
+                        self.status_led.pulse_ready()
+                    elif not started_playback:
+                        self.status_led.off()
