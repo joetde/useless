@@ -189,7 +189,7 @@ def parse_args() -> argparse.Namespace:
         "--lang-pin-2",
         type=int,
         default=DEFAULT_LANG_SWITCH_PIN_2,
-        help=f"BCM GPIO pin for language switch State II -> Chinese (default: {DEFAULT_LANG_SWITCH_PIN_2}, physical pin 5; both HIGH -> English).",
+        help=f"BCM GPIO pin for language switch State II -> Chinese (default: {DEFAULT_LANG_SWITCH_PIN_2}, physical pin 5; both HIGH -> Korean).",
     )
     parser.add_argument(
         "--no-lang-switch",
@@ -205,7 +205,7 @@ def parse_args() -> argparse.Namespace:
         "-l", "--language",
         type=str,
         default=DEFAULT_LANGUAGE,
-        help="Force transcription and TTS language using ISO code (e.g., 'en', 'fr', 'zh'). Omit for auto-detection.",
+        help="Force transcription and TTS language using ISO code (e.g., 'ko', 'fr', 'zh'). Omit for auto-detection.",
     )
     parser.add_argument(
         "--allowed-languages",
@@ -394,7 +394,7 @@ def main() -> None:
             )
             print(
                 f"Language switch      : GPIO {args.lang_pin_1} (I=fr), "
-                f"GPIO {args.lang_pin_2} (II=zh), both HIGH=en "
+                f"GPIO {args.lang_pin_2} (II=zh), both HIGH=ko "
                 f"[current: {language_switch.describe_state()}]"
             )
         elif args.no_lang_switch:

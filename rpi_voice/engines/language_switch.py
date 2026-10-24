@@ -24,7 +24,7 @@ class LanguageSwitch:
     and a common Ground pin:
       - State I  (GPIO `pin_1` LOW, `pin_2` HIGH) -> Force French ('fr')
       - State II (GPIO `pin_2` LOW, `pin_1` HIGH) -> Force Chinese ('zh')
-      - Both GPIOs HIGH (`pin_1` HIGH, `pin_2` HIGH) -> Force English ('en')
+      - Both GPIOs HIGH (`pin_1` HIGH, `pin_2` HIGH) -> Force Korean ('ko')
 
     Runs a background monitor thread so the user can flip the switch at any time
     and hear a spoken confirmation ("Now switching to ...") in the newly selected language.
@@ -36,7 +36,7 @@ class LanguageSwitch:
         pin_2: int = DEFAULT_LANG_SWITCH_PIN_2,
         lang_state_1: str = "fr",
         lang_state_2: str = "zh",
-        lang_both_high: str = "en",
+        lang_both_high: str = "ko",
         bounce_time: float = DEFAULT_GPIO_BOUNCE_TIME,
         settle_time: float = DEFAULT_LANG_SWITCH_SETTLE_TIME,
         tts_engine: Optional["TTSEngine"] = None,
@@ -68,7 +68,7 @@ class LanguageSwitch:
 
     @property
     def current_language(self) -> str:
-        """Return the currently active forced language code ('fr', 'zh', or 'en')."""
+        """Return the currently active forced language code ('fr', 'zh', or 'ko')."""
         return self._current_language
 
     def read_language(self) -> str:

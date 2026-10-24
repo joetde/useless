@@ -25,10 +25,10 @@ DEFAULT_LED_PULSE_FADE_IN = 1.0
 DEFAULT_LED_PULSE_FADE_OUT = 1.0
 
 # Speech-to-Text settings
-DEFAULT_LANGUAGE = None  # Force ISO language code (e.g. "en", "fr") or None for auto-detect
+DEFAULT_LANGUAGE = None  # Force ISO language code (e.g. "ko", "fr", "zh") or None for auto-detect
 DEFAULT_STT_MODEL = "base"
 DEFAULT_STT_BEAM_SIZE = 5
-DEFAULT_ALLOWED_LANGUAGES = ("en", "fr", "zh")  # Restrict auto-detection (None for all 99)
+DEFAULT_ALLOWED_LANGUAGES = ("ko", "fr", "zh")  # Restrict auto-detection (None for all 99)
 DEFAULT_VAD_PARAMETERS = {
     "min_silence_duration_ms": 500,
     "speech_pad_ms": 500,
@@ -46,6 +46,10 @@ STT_INITIAL_PROMPTS = {
         "C'est quoi les nuages, le soleil, la lune, les étoiles, la pluie, les avions, les animaux, les canards ? "
         "Pourquoi le ciel est bleu ? Comment les avions volent ?"
     ),
+    "ko": (
+        "안녕하세요, 지금 몇 시예요? 이건 뭐예요? 하늘은 왜 파래요? "
+        "구름, 태양, 달, 별, 비, 비행기, 동물은 뭐예요? 비행기는 어떻게 날아요?"
+    ),
     "en": (
         "Hello, how are you? What time is it? What are clouds, the sun, the moon, stars, rain, airplanes, animals? "
         "Why is the sky blue? How do airplanes fly?"
@@ -59,7 +63,7 @@ STT_INITIAL_PROMPTS = {
 DEFAULT_SPEECH_SPEED = 1.0   # length_scale > 1.0 speaks slower, < 1.0 speaks faster
 DEFAULT_NOISE_SCALE = 0.85   # Higher noise_scale (default 0.667) adds lively pitch & tone variation
 DEFAULT_NOISE_W_SCALE = 0.9  # Phoneme duration variability for animated cadence
-DEFAULT_PRELOAD_LANGUAGES = ("en", "fr", "zh")
+DEFAULT_PRELOAD_LANGUAGES = ("ko", "fr", "zh")
 DEFAULT_VOICE_EFFECT = "helium"
 
 # Goofy FFmpeg audio filter templates ({sr} is replaced with the WAV sample rate)
@@ -82,12 +86,14 @@ LANGUAGE_NAMES = {
 }
 
 LANGUAGE_SWITCH_ANNOUNCEMENTS = {
+    "ko": "이제 한국어예요!",
     "en": "Now it's English!",
     "fr": "Maintenant, c'est le français !",
     "zh": "现在是中文啦！",
 }
 
 PIPER_VOICE_MAP = {
+    "ko": "ko_KR-kss-medium",
     "en": "en_GB-semaine-medium",
     "fr": "fr_FR-upmc-medium",
     "zh": "zh_CN-huayan-medium",
@@ -107,9 +113,10 @@ PIPER_VOICE_MAP = {
     "ar": "ar_JO-kareem-medium",
     "hi": "hi_IN-priyamvada-medium",
 }
-DEFAULT_PIPER_VOICE = "en_GB-semaine-medium"
+DEFAULT_PIPER_VOICE = "ko_KR-kss-medium"
 
 AVAILABLE_PIPER_VOICES = {
+    "ko": ["ko_KR-kss-medium"],
     "en": ["en_GB-semaine-medium", "en_US-lessac-medium"],
     "fr": ["fr_FR-upmc-medium", "fr_FR-siwis-medium", "fr_FR-tom-medium", "fr_FR-gilles-low"],
     "zh": ["zh_CN-huayan-medium", "zh_CN-xiao_ya-medium", "zh_CN-chaowen-medium"],
@@ -135,7 +142,7 @@ DEFAULT_CONTEXT_IDLE_TIMEOUT = 600.0  # Seconds of inactivity (10 mins) before r
 DEFAULT_SYSTEM_PROMPT = (
     "You are an educational voice assistant for a young child (around 3 to 5 years old). "
     "Follow these rules strictly:\n"
-    "1. Always reply in the exact same language as the user's question (for example English, French, or Chinese).\n"
+    "1. Always reply in the exact same language as the user's question (for example Korean, French, or Chinese).\n"
     "2. The input comes from automatic Speech-to-Text of a young child's voice and may contain phonetic transcription errors "
     "(e.g. 'ennuiage' instead of 'nuage', 'calards' instead of 'canards', 'aimat' instead of 'volent', 'Keller' instead of 'quelle heure'). "
     "Infer the intended words from phonetic similarity and conversation context before answering.\n"

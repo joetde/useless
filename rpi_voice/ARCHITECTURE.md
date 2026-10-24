@@ -28,7 +28,7 @@ flowchart TD
     RecSwitch -->|"Hold to record"| Recorder
     Mic -->|"16kHz Mono PCM"| Recorder
     Recorder -->|"/tmp/recorded_audio.wav"| STT
-    LangSwitch -->|"State I='fr', II='zh', High='en'"| LangMon
+    LangSwitch -->|"State I='fr', II='zh', High='ko'"| LangMon
     LangMon -.->|"Forced language code"| STT
     LangMon -.->|"Forced language code"| LLM
     LangMon -.->|"Live switch announcement"| TTS
@@ -49,7 +49,7 @@ flowchart TD
 | **Record Switch** | `GPIO 21` | Pin 40 ($\rightarrow$ GND Pin 39) | Active `LOW` (internal pull-up) | Closed = recording audio; Open = stop & process |
 | **Language Switch — State I** | `GPIO 2` | Pin 3 ($\rightarrow$ GND Pin 6/9) | Active `LOW` (1.8 k$\Omega$ onboard pull-up) | Closed = force **French (`fr`)** |
 | **Language Switch — State II** | `GPIO 3` | Pin 5 ($\rightarrow$ GND Pin 6/9) | Active `LOW` (1.8 k$\Omega$ onboard pull-up) | Closed = force **Chinese (`zh`)** |
-| **Language Switch — Center/Open** | `GPIO 2 & 3` | Pins 3 & 5 both `HIGH` | Both pins `HIGH` (3.3V pull-up) | Forces **English (`en`)** |
+| **Language Switch — Center/Open** | `GPIO 2 & 3` | Pins 3 & 5 both `HIGH` | Both pins `HIGH` (3.3V pull-up) | Forces **Korean (`ko`)** |
 | **Status LED** | `GPIO 13` | Pin 33 ($\rightarrow$ GND Pin 34) | Active `HIGH` (PWM output) | **Pulsing** = ready; **Off** = recording/speaking; **Solid ON** = thinking |
 
 ---
@@ -99,8 +99,8 @@ Single source of truth for all defaults and mappings:
 - **Audio & STT Settings**: 16 kHz sample rate (`RATE`), Silero VAD thresholds (`DEFAULT_VAD_PARAMETERS`), FFmpeg bandpass + dynamic normalization filter (`STT_AUDIO_FILTER`), and `DEFAULT_STT_MODEL` (`"base"`).
 - **Language & Voice Mappings**:
   - `LANGUAGE_NAMES`: ISO code $\rightarrow$ human-readable language name.
-  - `LANGUAGE_SWITCH_ANNOUNCEMENTS`: Native spoken confirmations when flipping the switch (`"en"`, `"fr"`, `"zh"`).
-  - `PIPER_VOICE_MAP` & `AVAILABLE_PIPER_VOICES`: Maps `"en"` (`en_GB-semaine-medium`), `"fr"` (`fr_FR-upmc-medium`), `"zh"` (`zh_CN-huayan-medium`, `zh_CN-xiao_ya-medium`, `zh_CN-chaowen-medium`), and 15+ other languages to Piper ONNX models.
+  - `LANGUAGE_SWITCH_ANNOUNCEMENTS`: Native spoken confirmations when flipping the switch (`"ko"`, `"fr"`, `"zh"`, `"en"`).
+  - `PIPER_VOICE_MAP` & `AVAILABLE_PIPER_VOICES`: Maps `"ko"` (`ko_KR-kss-medium`), `"fr"` (`fr_FR-upmc-medium`), `"zh"` (`zh_CN-huayan-medium`, `zh_CN-xiao_ya-medium`, `zh_CN-chaowen-medium`), `"en"` (`en_GB-semaine-medium`), and 15+ other languages to Piper ONNX models.
   - `VOICE_EFFECTS`: FFmpeg filter graphs for `"none"`, `"chipmunk"`, `"helium"`, `"monster"`, `"robot"`, `"alien"`, and `"wobble"`.
 - **LLM & Guardrails**: `DEFAULT_SYSTEM_PROMPT` enforcing factual, age-appropriate (3–5 years old), 1–3 sentence plain-text answers with no roleplay or markdown.
 
@@ -124,9 +124,9 @@ Automatically finds attached USB audio peripherals by parsing `arecord -l` and `
 
 ### 4.5 Live Language Switch: `engines/language_switch.py`
 - **`LanguageSwitch`**: Monitors the 3-state physical switch on BCM GPIO 2 and GPIO 3 in a background daemon thread:
-  - `read_language()`: Maps `GPIO 2 LOW` $\rightarrow$ `"fr"`, `GPIO 3 LOW` $\rightarrow$ `"zh"`, and `Both HIGH` $\rightarrow$ `"en"`.
-  - `_monitor_loop()`: Applies a `200ms` settling window (`DEFAULT_LANG_SWITCH_SETTLE_TIME`) so flipping across the center `Both HIGH` position from State I to State II does not trigger an intermediate English announcement.
-  - `_handle_language_change()`: Updates `current_language`, interrupts any in-progress TTS playback (`tts_engine.interrupt_playback()`), speaks the native announcement (`"Maintenant, c'est le français !"`, `"现在是中文啦！"`, or `"Now it's English!"`), and restores the ready LED pulse.
+  - `read_language()`: Maps `GPIO 2 LOW` $\rightarrow$ `"fr"`, `GPIO 3 LOW` $\rightarrow$ `"zh"`, and `Both HIGH` $\rightarrow$ `"ko"`.
+  - `_monitor_loop()`: Applies a `200ms` settling window (`DEFAULT_LANG_SWITCH_SETTLE_TIME`) so flipping across the center `Both HIGH` position from State I to State II does not trigger an intermediate Korean announcement.
+  - `_handle_language_change()`: Updates `current_language`, interrupts any in-progress TTS playback (`tts_engine.interrupt_playback()`), speaks the native announcement (`"Maintenant, c'est le français !"`, `"现在是中文啦！"`, or `"이제 한국어예요!"`), and restores the ready LED pulse.
 
 ---
 
@@ -158,7 +158,7 @@ Defines the abstract `RecorderEngine` interface and two concrete implementations
 ### 4.9 Neural Text-to-Speech (TTS): `engines/tts.py`
 - **`PiperTTSEngine`**:
   - Manages local ONNX models in `voices/` (auto-downloading missing models via `piper.download_voices`).
-  - `preload_voices()`: Loads English, French, and Chinese models into memory at startup for zero-latency switching.
+  - `preload_voices()`: Loads Korean, French, and Chinese models into memory at startup for zero-latency switching.
   - `synthesize_to_file()`: Synthesizes speech via `PiperVoice.synthesize_wav` (with multi-speaker support such as `en_GB-semaine-medium` speaker 3) and applies the selected FFmpeg goofy voice effect (`helium`, `chipmunk`, `monster`, `robot`, `alien`, `wobble`, or `random`).
   - `speak()` & `interrupt_playback()`: Thread-safe sentence-by-sentence streaming synthesis piped directly through FFmpeg (for goofy voice effects) into `aplay` with zero intermediate disk I/O, plus support for interrupting ongoing speech when the language switch is flipped and restoring the `StatusLED` ready pulse afterward.
 

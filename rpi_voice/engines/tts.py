@@ -115,7 +115,7 @@ class PiperTTSEngine(TTSEngine):
         forced_language: Optional[str] = None,
         default_cached_langs: Iterable[str] = DEFAULT_PRELOAD_LANGUAGES,
     ) -> None:
-        """Pre-load the forced language voice or default languages (en, fr, zh) for instant playback."""
+        """Pre-load the forced language voice or default languages (ko, fr, zh) for instant playback."""
         if forced_language:
             self.get_voice(forced_language)
             return
@@ -124,7 +124,7 @@ class PiperTTSEngine(TTSEngine):
             self.get_voice(lang)
 
         if not self.loaded_voices:
-            self.get_voice("en")
+            self.get_voice("ko")
 
     def _resolve_effect(self) -> str:
         """Return the concrete effect name to apply (picking one if set to 'random')."""
