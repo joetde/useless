@@ -83,13 +83,13 @@ rpi_voice/
 The top-level orchestrator and CLI parser:
 - **`main()`**: Parses CLI flags (GPIO pins, STT model, LLM provider/model, context window settings, TTS voice speed and goofy effect), detects USB audio hardware, initializes engines, preloads TTS models into RAM, starts background language-switch monitoring, and ensures clean GPIO/session teardown on `SIGINT`/`SIGTERM`.
 - **`run_pipeline()`**: Runs the main `Record -> Transcribe -> LLM -> Speak` loop:
-  1. Waits for `recorder.record()` to capture `/tmp/recorded_audio.wav`.
+  1. Waits for `recorder.record()` to capture `/tmp/recorded_audio.wav` (immediately starts recording if the button was already pressed to interrupt a previous round).
   2. Sets `status_led.solid_thinking()`.
   3. Queries `language_switch.current_language` (or CLI `--language`) and calls `stt_engine.transcribe()`.
   4. Retrieves active conversation context from `session_logger.get_context_for_next_turn()`.
   5. Queries `llm_engine.generate()` for a child-friendly educational explanation in the active language.
   6. Logs the turn to disk via `session_logger.log_turn()`.
-  7. Synthesizes and plays the response via `tts_engine.speak()`.
+  7. Synthesizes and plays the response via `tts_engine.speak()`, aborting immediately if the record button is pressed during processing or playback to start a new recording round.
 
 ---
 

@@ -85,6 +85,9 @@ def run_pipeline(
     language_switch: Optional[LanguageSwitch] = None,
 ) -> None:
     """Run the interactive record -> transcribe -> LLM -> speak loop."""
+    if tts_engine is not None and hasattr(recorder, "on_press"):
+        recorder.on_press = tts_engine.interrupt_playback
+
     while True:
         audio_path = recorder.record()
         if audio_path is None:
@@ -100,6 +103,10 @@ def run_pipeline(
         )
         last_topic_hint = context_history[-1].user_text if context_history else None
 
+        if recorder.is_triggered():
+            print("  * [Interrupted] Button pressed — restarting round...")
+            continue
+
         active_language = (
             language_switch.current_language if language_switch is not None else language
         )
@@ -109,6 +116,9 @@ def run_pipeline(
             context_hint=last_topic_hint,
         )
         if result is None:
+            continue
+        if recorder.is_triggered():
+            print("  * [Interrupted] Button pressed — restarting round...")
             continue
 
         print_transcription_result(result)
@@ -127,6 +137,9 @@ def run_pipeline(
                 language=response_language,
                 history=context_history,
             )
+            if recorder.is_triggered():
+                print("  * [Interrupted] Button pressed — restarting round...")
+                continue
             if not llm_reply:
                 print("Warning: No response received from LLM.")
                 if session_logger is not None:
@@ -146,13 +159,23 @@ def run_pipeline(
                 context_turns_used=len(context_history),
             )
 
+        if recorder.is_triggered():
+            print("  * [Interrupted] Button pressed — restarting round...")
+            continue
+
         if tts_engine is not None:
             final_speak_lang = (
                 language_switch.current_language
                 if language_switch is not None
                 else response_language
             )
-            tts_engine.speak(spoken_text, lang_code=final_speak_lang)
+            tts_engine.speak(
+                spoken_text,
+                lang_code=final_speak_lang,
+                should_abort=recorder.is_triggered,
+            )
+            if recorder.is_triggered():
+                print("  * [Interrupted] Button pressed during playback — starting new recording...")
         elif status_led is not None:
             status_led.off()
 
@@ -433,6 +456,7 @@ def main() -> None:
 
         if language_switch is not None:
             language_switch.tts_engine = tts_engine
+            language_switch.recorder = recorder
             language_switch.start_monitoring()
 
         run_pipeline(

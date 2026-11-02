@@ -54,6 +54,7 @@ class LanguageSwitch:
         self.bounce_time = bounce_time
         self.settle_time = settle_time
         self.tts_engine = tts_engine
+        self.recorder = None
         self.announcements = dict(announcements or LANGUAGE_SWITCH_ANNOUNCEMENTS)
         self.on_change = on_change
         self.announce_changes = announce_changes
@@ -147,11 +148,17 @@ class LanguageSwitch:
         if self.announce_changes and self.tts_engine is not None:
             try:
                 self.tts_engine.interrupt_playback()
+                should_abort = (
+                    self.recorder.is_triggered
+                    if self.recorder is not None
+                    else None
+                )
                 self.tts_engine.speak(
                     phrase,
                     lang_code=new_lang,
                     output_wav=TTS_LANG_SWITCH_FILENAME,
                     restore_led_ready=True,
+                    should_abort=should_abort,
                 )
             except Exception as e:
                 print(f"Warning: Could not speak language switch announcement ({e}).")

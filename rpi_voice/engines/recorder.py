@@ -80,6 +80,10 @@ class RecorderEngine(ABC):
         self.rate = rate
         self.status_led = status_led
 
+    def is_triggered(self) -> bool:
+        """Return True if the recording button/trigger is currently pressed."""
+        return False
+
     @abstractmethod
     def record(self, output_file: str = WAVE_OUTPUT_FILENAME) -> Optional[str]:
         """
@@ -151,7 +155,35 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
         self.bounce_time = bounce_time
         self.post_release_duration = max(0.0, float(post_release_duration))
         self.button = Button(gpio_pin, pull_up=True, bounce_time=bounce_time)
+        self._recording_active = False
+        self._interrupted = False
+        self._on_press_callback = None
+
+        def _handle_press() -> None:
+            if not self._recording_active:
+                self._interrupted = True
+                if self._on_press_callback is not None:
+                    self._on_press_callback()
+
+        self.button.when_pressed = _handle_press
         atexit.register(self.close)
+
+    @property
+    def on_press(self):
+        return self._on_press_callback
+
+    @on_press.setter
+    def on_press(self, callback):
+        self._on_press_callback = callback
+
+    def is_triggered(self) -> bool:
+        return bool(
+            self._interrupted
+            or (self.button is not None and self.button.is_pressed)
+        )
+
+    def clear_trigger(self) -> None:
+        self._interrupted = False
 
     def close(self) -> None:
         if self.button is not None:
@@ -159,51 +191,58 @@ class GPIOSwitchAlsaRecorder(RecorderEngine):
             self.button = None
 
     def record(self, output_file: str = WAVE_OUTPUT_FILENAME) -> Optional[str]:
-        with _cbreak_terminal(require_tty=False) as has_tty:
-            suffix = ", or press 'q' to quit..." if has_tty else "..."
-            print(f"\n[Ready] Close switch on GPIO {self.gpio_pin} to record (open to stop){suffix}")
+        self._recording_active = True
+        self._interrupted = False
+        try:
+            with _cbreak_terminal(require_tty=False) as has_tty:
+                if not self.button.is_pressed:
+                    suffix = ", or press 'q' to quit..." if has_tty else "..."
+                    print(f"\n[Ready] Close switch on GPIO {self.gpio_pin} to record (open to stop){suffix}")
 
-            if self.status_led is not None:
-                self.status_led.pulse_ready()
-
-            while not self.button.is_pressed:
-                if has_tty and _is_quit_key(_read_available_keys(0.0)):
                     if self.status_led is not None:
-                        self.status_led.off()
-                    return None
-                time.sleep(0.02)
+                        self.status_led.pulse_ready()
 
-            if self.status_led is not None:
-                self.status_led.off()
+                    while not self.button.is_pressed:
+                        if has_tty and _is_quit_key(_read_available_keys(0.0)):
+                            if self.status_led is not None:
+                                self.status_led.off()
+                            return None
+                        time.sleep(0.02)
 
-            process = self._start_arecord(output_file)
-            start_time = time.monotonic()
-
-            try:
-                while self.button.is_pressed and process.poll() is None:
-                    elapsed = time.monotonic() - start_time
-                    print(
-                        f"\r  * [RECORDING] {elapsed:4.1f}s (Keep switch on GPIO {self.gpio_pin} closed...) ",
-                        end="",
-                        flush=True,
-                    )
-                    if has_tty and _is_quit_key(_read_available_keys(0.0)):
-                        self._stop_arecord(process)
-                        return None
-                    time.sleep(0.02)
-
-                # Capture a brief post-release tail so the final syllable isn't cut off
-                if self.post_release_duration > 0 and process.poll() is None:
-                    time.sleep(self.post_release_duration)
-            finally:
+                self._interrupted = False
                 if self.status_led is not None:
-                    self.status_led.solid_thinking()
-                self._stop_arecord(process)
+                    self.status_led.off()
 
-            total_time = time.monotonic() - start_time
-            print(f"\r  * [RECORDING] Stopped ({total_time:.1f}s). Processing audio...          ")
+                process = self._start_arecord(output_file)
+                start_time = time.monotonic()
 
-        return self._validate_recording(output_file)
+                try:
+                    while self.button.is_pressed and process.poll() is None:
+                        elapsed = time.monotonic() - start_time
+                        print(
+                            f"\r  * [RECORDING] {elapsed:4.1f}s (Keep switch on GPIO {self.gpio_pin} closed...) ",
+                            end="",
+                            flush=True,
+                        )
+                        if has_tty and _is_quit_key(_read_available_keys(0.0)):
+                            self._stop_arecord(process)
+                            return None
+                        time.sleep(0.02)
+
+                    # Capture a brief post-release tail so the final syllable isn't cut off
+                    if self.post_release_duration > 0 and process.poll() is None:
+                        time.sleep(self.post_release_duration)
+                finally:
+                    if self.status_led is not None:
+                        self.status_led.solid_thinking()
+                    self._stop_arecord(process)
+
+                total_time = time.monotonic() - start_time
+                print(f"\r  * [RECORDING] Stopped ({total_time:.1f}s). Processing audio...          ")
+
+            return self._validate_recording(output_file)
+        finally:
+            self._recording_active = False
 
 
 class HoldKeyAlsaRecorder(RecorderEngine):
@@ -225,24 +264,45 @@ class HoldKeyAlsaRecorder(RecorderEngine):
         self.trigger_key = trigger_key
         self.trigger_key_name = trigger_key_name
         self.release_timeout = release_timeout
+        self._pending_trigger = False
+
+    def is_triggered(self) -> bool:
+        """Check if the trigger key was pressed on stdin (non-blocking)."""
+        if self._pending_trigger:
+            return True
+        if not sys.stdin.isatty():
+            return False
+        try:
+            with _cbreak_terminal(require_tty=False) as has_tty:
+                if has_tty:
+                    chars = _read_available_keys(0.0)
+                    if self.trigger_key in chars:
+                        self._pending_trigger = True
+                        return True
+        except Exception:
+            pass
+        return False
 
     def record(self, output_file: str = WAVE_OUTPUT_FILENAME) -> Optional[str]:
         with _cbreak_terminal(require_tty=True):
-            print(
-                f"\n[Ready] Hold [{self.trigger_key_name}] to record (release to stop), or press 'q' to quit..."
-            )
+            if self._pending_trigger:
+                self._pending_trigger = False
+            else:
+                print(
+                    f"\n[Ready] Hold [{self.trigger_key_name}] to record (release to stop), or press 'q' to quit..."
+                )
 
-            if self.status_led is not None:
-                self.status_led.pulse_ready()
+                if self.status_led is not None:
+                    self.status_led.pulse_ready()
 
-            while True:
-                chars = _read_available_keys(0.1)
-                if _is_quit_key(chars):
-                    if self.status_led is not None:
-                        self.status_led.off()
-                    return None
-                if self.trigger_key in chars:
-                    break
+                while True:
+                    chars = _read_available_keys(0.1)
+                    if _is_quit_key(chars):
+                        if self.status_led is not None:
+                            self.status_led.off()
+                        return None
+                    if self.trigger_key in chars:
+                        break
 
             if self.status_led is not None:
                 self.status_led.off()

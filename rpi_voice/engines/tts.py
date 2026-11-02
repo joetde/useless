@@ -5,7 +5,7 @@ import threading
 import wave
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, Iterable, Optional, TYPE_CHECKING, Union
+from typing import Callable, Dict, Iterable, Optional, TYPE_CHECKING, Union
 from piper import PiperVoice, SynthesisConfig
 from piper.download_voices import download_voice
 
@@ -38,6 +38,7 @@ class TTSEngine(ABC):
         lang_code: str = "en",
         output_wav: str = TTS_OUTPUT_FILENAME,
         restore_led_ready: bool = False,
+        should_abort: Optional[Callable[[], bool]] = None,
     ) -> None:
         """Synthesize text to speech and play it out loud."""
 
@@ -222,14 +223,20 @@ class PiperTTSEngine(TTSEngine):
         lang_code: str = "en",
         output_wav: str = TTS_OUTPUT_FILENAME,
         restore_led_ready: bool = False,
+        should_abort: Optional[Callable[[], bool]] = None,
     ) -> None:
         """Synthesize text sentence-by-sentence and stream directly through FFmpeg -> `aplay`."""
         clean_text = text.strip()
         if not clean_text:
             return
 
+        def _is_aborted() -> bool:
+            return self._abort_event.is_set() or (should_abort is not None and should_abort())
+
         with self._lock:
             self._abort_event.clear()
+            if _is_aborted():
+                return
             was_ready = self.status_led is not None and self.status_led.state == "ready"
 
             voice_name = self.get_voice_name(lang_code)
@@ -270,7 +277,8 @@ class PiperTTSEngine(TTSEngine):
 
             try:
                 for chunk in voice.synthesize(clean_text, syn_config=syn_config):
-                    if self._abort_event.is_set():
+                    if _is_aborted():
+                        self._abort_event.set()
                         break
                     pcm_bytes = chunk.audio_int16_bytes
                     if not pcm_bytes:
@@ -350,18 +358,21 @@ class PiperTTSEngine(TTSEngine):
                     except OSError:
                         pass
 
-                if not self._abort_event.is_set():
-                    if ffmpeg_proc is not None:
-                        ffmpeg_proc.wait()
-                    if aplay_proc is not None:
-                        aplay_proc.wait()
+                while not _is_aborted():
+                    ffmpeg_done = ffmpeg_proc is None or ffmpeg_proc.poll() is not None
+                    aplay_done = aplay_proc is None or aplay_proc.poll() is not None
+                    if ffmpeg_done and aplay_done:
+                        break
+                    self._abort_event.wait(0.02)
+                else:
+                    self._abort_event.set()
             finally:
                 if self._abort_event.is_set():
                     self._terminate_process(aplay_proc)
                     self._terminate_process(ffmpeg_proc)
                 self._playback_proc = None
                 self._ffmpeg_proc = None
-                if self.status_led is not None:
+                if self.status_led is not None and not self._abort_event.is_set():
                     if restore_led_ready or was_ready:
                         self.status_led.pulse_ready()
                     elif not started_playback:
