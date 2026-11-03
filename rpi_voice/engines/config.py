@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 
 WAVE_OUTPUT_FILENAME = "/tmp/recorded_audio.wav"
 WAVE_PREPROCESSED_FILENAME = "/tmp/recorded_audio_norm.wav"
@@ -91,6 +92,28 @@ LANGUAGE_SWITCH_ANNOUNCEMENTS = {
     "fr": "Maintenant, c'est le français !",
     "zh": "现在是中文啦！",
 }
+
+ERROR_MESSAGES = {
+    "network": {
+        "fr": "Il n'y a pas de connectivité, demande à papa pour me réparer !",
+        "ko": "인터넷이 연결되지 않았어요, 아빠한테 고쳐 달라고 해 주세요!",
+        "zh": "没有网络连接啦，请让爸爸来修理我吧！",
+        "en": "There is no internet connection, please ask Papa to fix me!",
+    },
+    "service": {
+        "fr": "Oups, j'ai un petit problème technique, demande à papa pour me réparer !",
+        "ko": "앗, 작은 문제가 생겼어요, 아빠한테 고쳐 달라고 해 주세요!",
+        "zh": "哎呀，我出了一点小故障，请让爸爸来修理我吧！",
+        "en": "Oops, I have a little technical problem, please ask Papa to fix me!",
+    },
+}
+
+
+def get_error_message(error_kind: str, lang_code: Optional[str] = None) -> str:
+    """Return a child-friendly localized spoken error message for `error_kind` ('network' or 'service')."""
+    messages_by_lang = ERROR_MESSAGES.get(error_kind, ERROR_MESSAGES["service"])
+    code = (lang_code or "fr").lower().strip()
+    return messages_by_lang.get(code, messages_by_lang["fr"])
 
 PIPER_VOICE_MAP = {
     "ko": "ko_KR-kss-medium",

@@ -36,6 +36,7 @@ from engines import (
     create_llm_engine,
     detect_usb_mic_device,
     detect_usb_speaker_device,
+    get_error_message,
     get_language_name,
 )
 
@@ -141,13 +142,33 @@ def run_pipeline(
                 print("  * [Interrupted] Button pressed — restarting round...")
                 continue
             if not llm_reply:
-                print("Warning: No response received from LLM.")
+                last_err = getattr(llm_engine, "last_error", None)
+                error_kind = getattr(last_err, "kind", "service") if last_err is not None else "service"
+                error_detail = str(last_err) if last_err is not None else "No response received from LLM."
+                print(f"Warning: {error_detail}")
                 if session_logger is not None:
                     session_logger.log_turn(
                         transcription=result,
                         llm_response=None,
                         context_turns_used=len(context_history),
+                        error=error_detail,
+                        error_kind=error_kind,
                     )
+                if tts_engine is not None:
+                    error_speak_lang = (
+                        language_switch.current_language
+                        if language_switch is not None
+                        else response_language
+                    )
+                    error_spoken_text = get_error_message(error_kind, error_speak_lang)
+                    print(f"Error Response ({error_kind}):\n  {error_spoken_text}\n" + "=" * 48)
+                    tts_engine.speak(
+                        error_spoken_text,
+                        lang_code=error_speak_lang,
+                        should_abort=recorder.is_triggered,
+                    )
+                elif status_led is not None:
+                    status_led.off()
                 continue
             print_llm_response(llm_reply)
             spoken_text = llm_reply

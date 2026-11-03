@@ -29,6 +29,28 @@ class ChatTurn:
     timestamp: Optional[str] = None
 
 
+class LLMError(Exception):
+    """Base exception raised when an LLM engine fails to produce a reply."""
+
+    def __init__(self, message: str, kind: str = "service"):
+        super().__init__(message)
+        self.kind = kind
+
+
+class LLMNetworkError(LLMError):
+    """Raised when the LLM API cannot be reached due to network, DNS, or timeout issues."""
+
+    def __init__(self, message: str):
+        super().__init__(message, kind="network")
+
+
+class LLMServiceError(LLMError):
+    """Raised when the LLM API returns an HTTP error, invalid payload, or blocked/empty response."""
+
+    def __init__(self, message: str):
+        super().__init__(message, kind="service")
+
+
 def clean_text_for_speech(text: str) -> str:
     """Strip markdown formatting and extra whitespace so TTS reads naturally."""
     cleaned = re.sub(r"[*_`#~]+", "", text)
@@ -52,6 +74,7 @@ class LLMEngine(ABC):
         self.temperature = temperature
         self.max_output_tokens = max_output_tokens
         self.timeout = timeout
+        self.last_error: Optional[LLMError] = None
         self._session = requests.Session()
 
     def _build_system_instruction(self, language: Optional[str] = None) -> str:
@@ -131,6 +154,7 @@ class GeminiLLMEngine(LLMEngine):
         if not clean_prompt:
             return None
 
+        self.last_error = None
         ctx_count = len(history) if history else 0
         ctx_info = f" with {ctx_count} prior turn(s) of context" if ctx_count else ""
         print(f"Asking Gemini ('{self.model}'{ctx_info})...")
@@ -162,16 +186,29 @@ class GeminiLLMEngine(LLMEngine):
                 timeout=self.timeout,
             )
             response.raise_for_status()
-            candidates = response.json().get("candidates", [])
+            data = response.json()
+            candidates = data.get("candidates", [])
             if not candidates:
-                print("Warning: Gemini returned no candidates.")
+                msg = "Gemini returned no candidates."
+                print(f"Warning: {msg}")
+                self.last_error = LLMServiceError(msg)
                 return None
 
             parts = candidates[0].get("content", {}).get("parts", [])
             raw_text = " ".join(part.get("text", "") for part in parts if "text" in part)
-            return clean_text_for_speech(raw_text) or None
-        except requests.RequestException as e:
+            cleaned = clean_text_for_speech(raw_text) or None
+            if cleaned is None:
+                msg = "Gemini returned an empty response."
+                print(f"Warning: {msg}")
+                self.last_error = LLMServiceError(msg)
+            return cleaned
+        except (requests.ConnectionError, requests.Timeout) as e:
+            print(f"Network error communicating with Gemini API: {e}")
+            self.last_error = LLMNetworkError(f"Gemini network error: {e}")
+            return None
+        except (requests.RequestException, ValueError) as e:
             print(f"Error communicating with Gemini API: {e}")
+            self.last_error = LLMServiceError(f"Gemini API error: {e}")
             return None
 
 
@@ -211,6 +248,7 @@ class OpenAICompatibleLLMEngine(LLMEngine):
         if not clean_prompt:
             return None
 
+        self.last_error = None
         ctx_count = len(history) if history else 0
         ctx_info = f", {ctx_count} prior turn(s) of context" if ctx_count else ""
         print(f"Asking LLM ('{self.model}' at {self.base_url}{ctx_info})...")
@@ -244,15 +282,28 @@ class OpenAICompatibleLLMEngine(LLMEngine):
                 timeout=self.timeout,
             )
             response.raise_for_status()
-            choices = response.json().get("choices", [])
+            data = response.json()
+            choices = data.get("choices", [])
             if not choices:
-                print("Warning: LLM returned no choices.")
+                msg = "LLM returned no choices."
+                print(f"Warning: {msg}")
+                self.last_error = LLMServiceError(msg)
                 return None
 
             raw_text = choices[0].get("message", {}).get("content", "")
-            return clean_text_for_speech(raw_text) or None
-        except requests.RequestException as e:
+            cleaned = clean_text_for_speech(raw_text) or None
+            if cleaned is None:
+                msg = "LLM returned an empty response."
+                print(f"Warning: {msg}")
+                self.last_error = LLMServiceError(msg)
+            return cleaned
+        except (requests.ConnectionError, requests.Timeout) as e:
+            print(f"Network error communicating with LLM API: {e}")
+            self.last_error = LLMNetworkError(f"LLM network error: {e}")
+            return None
+        except (requests.RequestException, ValueError) as e:
             print(f"Error communicating with LLM API: {e}")
+            self.last_error = LLMServiceError(f"LLM API error: {e}")
             return None
 
 

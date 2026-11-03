@@ -100,6 +100,7 @@ Single source of truth for all defaults and mappings:
 - **Language & Voice Mappings**:
   - `LANGUAGE_NAMES`: ISO code $\rightarrow$ human-readable language name.
   - `LANGUAGE_SWITCH_ANNOUNCEMENTS`: Native spoken confirmations when flipping the switch (`"ko"`, `"fr"`, `"zh"`, `"en"`).
+  - `ERROR_MESSAGES` & `get_error_message()`: Child-friendly localized spoken error messages in French, Korean, Chinese, and English differentiating `"network"` (offline / timeout / DNS) and `"service"` (API / technical errors), asking the child to get Papa to repair the device.
   - `PIPER_VOICE_MAP` & `AVAILABLE_PIPER_VOICES`: Maps `"ko"` (`ko_KR-kss-medium`), `"fr"` (`fr_FR-upmc-medium`), `"zh"` (`zh_CN-huayan-medium`, `zh_CN-xiao_ya-medium`, `zh_CN-chaowen-medium`), `"en"` (`en_GB-semaine-medium`), and 15+ other languages to Piper ONNX models.
   - `VOICE_EFFECTS`: FFmpeg filter graphs for `"none"`, `"chipmunk"`, `"helium"`, `"monster"`, `"robot"`, `"alien"`, and `"wobble"`.
 - **LLM & Guardrails**: `DEFAULT_SYSTEM_PROMPT` enforcing factual, age-appropriate (3–5 years old), 1–3 sentence plain-text answers with no roleplay or markdown.
@@ -147,7 +148,7 @@ Defines the abstract `RecorderEngine` interface and two concrete implementations
 ---
 
 ### 4.8 Educational LLM Engines: `engines/llm.py`
-- **`LLMEngine`**: Base class that combines `DEFAULT_SYSTEM_PROMPT` with an explicit language instruction matching the detected/forced language.
+- **`LLMEngine`**: Base class that combines `DEFAULT_SYSTEM_PROMPT` with an explicit language instruction matching the detected/forced language, and tracks `last_error` (`LLMNetworkError` vs. `LLMServiceError`) when requests fail.
 - **`GeminiLLMEngine`**: Calls the Google Gemini REST API (`gemini-3.5-flash-lite` by default) with multi-turn `history`.
 - **`OpenAICompatibleLLMEngine`**: Supports OpenAI (`gpt-4o-mini`), local Ollama (`llama3.2`), or any custom `--llm-base-url`.
 - **`EchoLLMEngine`**: Offline/debug passthrough (`--no-llm` or `--llm-provider echo`) that repeats the user's transcribed words back.

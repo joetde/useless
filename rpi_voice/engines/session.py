@@ -133,6 +133,8 @@ class SessionLogger:
         context_turns_used: int = 0,
         llm_provider: Optional[str] = None,
         llm_model: Optional[str] = None,
+        error: Optional[str] = None,
+        error_kind: Optional[str] = None,
     ) -> None:
         """Record a completed user/LLM turn in the rolling context window and write to audit files."""
         now = datetime.now().astimezone()
@@ -181,6 +183,10 @@ class SessionLogger:
             "llm_provider": llm_provider or self.metadata.get("llm_provider"),
             "llm_model": llm_model or self.metadata.get("llm_model"),
         }
+        if error is not None:
+            turn_record["error"] = error
+        if error_kind is not None:
+            turn_record["error_kind"] = error_kind
 
         with open(self.jsonl_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(turn_record, ensure_ascii=False) + "\n")
@@ -211,10 +217,17 @@ class SessionLogger:
                 ]
             )
 
+        if assistant_text and llm_response is not None:
+            response_display = assistant_text
+        elif error:
+            response_display = f"(Error [{error_kind or 'service'}]: {error})"
+        else:
+            response_display = "(LLM disabled / no response)"
+
         md_lines.extend(
             [
                 "**Assistant (LLM Response):**",
-                f"> {assistant_text if llm_response is not None else '(LLM disabled / no response)'}",
+                f"> {response_display}",
                 "",
                 "---",
                 "",
